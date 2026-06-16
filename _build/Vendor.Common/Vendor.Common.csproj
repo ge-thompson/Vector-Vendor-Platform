@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>Vendor.Common</RootNamespace>
+    <AssemblyName>Vendor.Common</AssemblyName>
+    <Description>Vendor-agnostic framework: events, adapter contract, dispatcher, persistence. The foundation that callers (OTR API, FBS, VB.NET POD) consume to integrate with any vendor.</Description>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Configuration" />
+    <Reference Include="System.Data" />
+  </ItemGroup>
+
+</Project>

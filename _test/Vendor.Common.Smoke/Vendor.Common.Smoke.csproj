@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net481</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>Vendor.Common.Smoke</RootNamespace>
+    <AssemblyName>Vendor.Common.Smoke</AssemblyName>
+    <Description>Console smoke test for Vendor.Common — exercises events, abstractions, config parsing without requiring a database.</Description>
+    <!-- Use App.config (vs older app.config conventions on full framework) -->
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Configuration" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Project reference to the framework we're testing -->
+    <ProjectReference Include="..\..\_build\Vendor.Common\Vendor.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- App.config gets copied next to the exe so ConfigurationManager finds it -->
+    <None Update="App.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

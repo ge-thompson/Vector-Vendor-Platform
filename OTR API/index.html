@@ -1,0 +1,120 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <title>Check Call List</title>
+</head>
+<body>
+
+    <div>
+        <h2>All Products</h2>
+        <ul id="checkcalls" />
+    </div>
+    <div>
+        <h2>Search by ID</h2>
+        <input type="button" value="Load" onclick="loadallitems();" />
+        <p id="product" />
+    </div>
+    <div>
+        <h2>Search by ID</h2>
+        <input type="text" id="checkcallId" size="5" />
+        <input type="button" value="Search" onclick="find();" />
+        <p id="product" />
+    </div>
+    <div>
+        <h2>Update by ID</h2>
+        <input type="text" id="UpdatecheckcallId" size="5" />
+        <input type="button" value="Update" onclick="updateCheckCall();" />
+        <p id="product" />
+    </div>
+
+    <script src="scripts/jquery-3.2.1.min.js"></script>
+    <script>
+        var uri = 'api/checkcall/GetCheckCall';
+        var uridrivertrip = 'api/checkcall/GetAllCheckCallsByDriverTrip';
+        var uritrip = 'api/checkcall/UpdateCheckCall';
+
+    //$(document).ready(function () {
+    //  // Send an AJAX request
+    //    $.getJSON(uriall)
+    //      .done(function (data) {
+    //        // On success, 'data' contains a list of products.
+    //        $.each(data, function (key, item) {
+    //          // Add a list item for the product.
+    //          $('<li>', { text: formatItem(item) }).appendTo($('#checkcalls'));
+    //        });
+    //      });
+    //});
+
+    $(document).ready(function () {
+        //loadallitems();
+    });
+
+    //function loadallitems() {
+    //    // Send an AJAX request
+    //    $.getJSON(uriall)
+    //      .done(function (data) {
+    //          // On success, 'data' contains a list of products.
+    //          $.each(data, function (key, item) {
+    //              // Add a list item for the product.
+    //              $('<li>', { text: formatItem(item) }).appendTo($('#checkcalls'));
+    //          });
+    //      });
+    //}
+
+
+    function formatItem(item) {
+        return item.ID + ': ' + item.CheckStatus + ': ' + item.CheckDate + ': ' + item.Comments;
+    }
+
+    function find() {
+        var id = $('#checkcallId').val();
+
+        $.ajax({
+            beforeSend: function(request) {
+                request.setRequestHeader("Authorization","Basic 4d53bce03ec34c0a911182d4c228ee6c:A93reRTUJHsCuQSHR+L3GxqOJyDmQpCgps102ciuabc=")
+            },
+            dataType: "json",
+            url: uri + '/' + id,
+            done: function(data) {
+                $('#checkcalls').text(formatItem(data));
+            },
+            fail: function (jqXHR, textStatus, err) {
+                $('#checkcalls').text('Error: ' + err);
+            }
+        });
+    }
+
+    //function find() {
+    //    var id = $('#checkcallId').val();
+
+    //    Authorization: Basic 4d53bce03ec34c0a911182d4c228ee6c:A93reRTUJHsCuQSHR+L3GxqOJyDmQpCgps102ciuabc=
+    //  $.getJSON(uri + '/' + id)
+    //      .done(function (data) {
+    //          $('#checkcalls').text(formatItem(data));
+    //      })
+    //      .fail(function (jqXHR, textStatus, err) {
+    //          $('#checkcalls').text('Error: ' + err);
+    //      });
+    //}
+    
+    //function updateCheckCall() {
+    //    var id = $('#UpdatecheckcallId').val();
+    //    var chk = { DriverTripID: 1, CheckStatus: 4, CheckDate: '3/6/2018 9:55 AM', Comments: 'HP' };
+    //    $.ajax({
+    //        type: "PUT",
+    //        data: JSON.stringify(chk),
+    //        url: uriupdate + '/' + id,
+    //        contentType: "application/json",
+    //        success: function (data) {
+    //            // On success, 'data' contains a list of products.
+    //            $.each(data, function (key, item) {
+    //                // Add a list item for the product.
+    //                $('<li>', { text: formatItem(item) }).appendTo($('#checkcalls'));
+    //            })
+    //        } 
+    //       });
+    //}
+
+    </script>
+</body>
+</html>
