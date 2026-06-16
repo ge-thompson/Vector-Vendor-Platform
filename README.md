@@ -20,7 +20,10 @@ _deliverables/            Design docs, decision log, SQL schema, worklog
   ...                     (11 deliverables total)
   _worklog.md             Session-by-session billing + status
 
-OTR API/                  Existing OTR API codebase (also under SVN)
+_OTR_API/                 The host web application that consumes the framework.
+                          TruckTools tracking integration + short URL service +
+                          (legacy, unused) InMotion + loadboard.
+
 FourKitesIntegration/     Original wrong-endpoint DLL code (historical, do not modify)
 ```
 
