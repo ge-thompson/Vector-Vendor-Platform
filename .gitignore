@@ -70,3 +70,8 @@ _ReSharper.*/
 
 # Logs
 *.log
+
+# Secrets — OTR API Web.config contains DB credentials and SMTP password.
+# The version-controlled reference is Web.config.template; real Web.config is
+# environment-specific and stays local.
+_OTR_API/Web.config

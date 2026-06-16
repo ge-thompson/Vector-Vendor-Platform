@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Web.config.template — reference configuration for OTR API.
+
+  Setup:
+    1. Copy this file to Web.config (in this same folder).
+    2. Replace every <YOUR_xxx> placeholder with the real value for your environment.
+    3. Web.config is gitignored; never commit the file with real secrets filled in.
+
+  Environments:
+    - Local dev:     LocalDB or local SQL Express instance
+    - Vector dev:    server=10.10.9.10\SQLEXPRESS12 (Vector internal)
+    - Production:    server=EC2AMAZ-BLVTTRF\SQLEXPRESS (Vector AWS)
+
+  Vendor framework (added June 2026):
+    - VendorDispatch.Enabled is a master kill switch. Keep false until smoke-tested.
+    - VendorAPI_FK is a separate database (NOT one of the existing OTR/TT/FBS DBs).
+      Schema lives in _deliverables/07_SQL_Schema/scripts/.
+  -->
+<configuration>
+
+  <configSections>
+    <!-- Existing OTR API settings -->
+    <sectionGroup name="applicationSettings"
+                  type="System.Configuration.ApplicationSettingsGroup, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089">
+      <section name="OTR_API.Properties.Settings"
+               type="System.Configuration.ClientSettingsSection, System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+               requirePermission="false" />
+    </sectionGroup>
+
+    <!-- Vendor integration framework -->
+    <section name="vendorAdapters"
+             type="Vendor.Common.Configuration.VendorAdaptersSection, Vendor.Common" />
+  </configSections>
+
+  <appSettings>
+    <!-- Existing OTR API settings -->
+    <add key="webpages:Version"              value="3.0.0.0" />
+    <add key="webpages:Enabled"              value="false" />
+    <add key="ClientValidationEnabled"       value="true" />
+    <add key="UnobtrusiveJavaScriptEnabled"  value="true" />
+    <add key="Debug"                         value="false" />
+
+    <!-- Vendor dispatch framework -->
+    <!-- Master kill switch. Set to "true" only after smoke testing. -->
+    <add key="VendorDispatch.Enabled"        value="false" />
+    <!-- Where the framework audits every outbound vendor call.
+         Points to VendorAPI_FK database (separate from VectorOTR / VectorOTR_TT / VectorOTR_FBS). -->
+    <add key="VendorDispatch.AuditConnectionString"
+         value="server=&lt;YOUR_SQL_HOST&gt;;uid=&lt;YOUR_SQL_USER&gt;;pwd=&lt;YOUR_SQL_PASSWORD&gt;;database=VendorAPI_FK;Connection Lifetime=600;Connection Timeout=60;" />
+    <!-- Fire-and-forget: dispatcher returns immediately, vendor calls happen async.
+         Recommended true for production so OTR API response times stay tight. -->
+    <add key="VendorDispatch.FireAndForget"  value="true" />
+    <!-- Stamped on every event for audit ("which app sent this?"). -->
+    <add key="VendorDispatch.SourceSystem"   value="OTR_API" />
+  </appSettings>
+
+  <connectionStrings>
+    <!-- Existing OTR API connections -->
+    <add name="hostjson"
+         connectionString="server=&lt;YOUR_SQL_HOST&gt;;uid=&lt;YOUR_SQL_USER&gt;;pwd=&lt;YOUR_SQL_PASSWORD&gt;;database=VectorOTR;Connection Lifetime=600;Connection Timeout=60;"
+         providerName="System.Data.SqlClient" />
+    <add name="hostTT"
+         connectionString="server=&lt;YOUR_SQL_HOST&gt;;uid=&lt;YOUR_SQL_USER&gt;;pwd=&lt;YOUR_SQL_PASSWORD&gt;;database=VectorOTR_TT;Connection Lifetime=600;Connection Timeout=60;"
+         providerName="System.Data.SqlClient" />
+    <add name="hostFBS"
+         connectionString="server=&lt;YOUR_SQL_HOST&gt;;uid=&lt;YOUR_SQL_USER&gt;;pwd=&lt;YOUR_SQL_PASSWORD&gt;;database=VectorOTR_FBS;Connection Lifetime=600;Connection Timeout=60;"
+         providerName="System.Data.SqlClient" />
+    <add name="hostRate"
+         connectionString="server=&lt;YOUR_SQL_HOST&gt;;uid=&lt;YOUR_SQL_USER&gt;;pwd=&lt;YOUR_SQL_PASSWORD&gt;;database=VectorFBS;Connection Lifetime=600;Connection Timeout=60;"
+         providerName="System.Data.SqlClient" />
+  </connectionStrings>
+
+  <vendorAdapters>
+    <adapters>
+      <!-- FourKites is Phase 1. Adding vendor #2 is a new line below.
+           No code change to OTR API or to the framework. -->
+      <add vendorName="FourKites"
+           adapterType="Vendor.FourKites.FourKitesAdapter, Vendor.FourKites"
+           inboundProcessorType="Vendor.FourKites.Webhooks.FourKitesWebhookProcessor, Vendor.FourKites"
+           webhookValidatorType="Vendor.FourKites.Webhooks.FourKitesWebhookSignatureValidator, Vendor.FourKites" />
+    </adapters>
+  </vendorAdapters>
+
+  <system.web>
+    <compilation debug="true" targetFramework="4.8.1" />
+    <httpRuntime targetFramework="4.5" />
+    <customErrors mode="Off" />
+  </system.web>
+
+  <system.webServer>
+    <handlers>
+      <remove name="ExtensionlessUrlHandler-Integrated-4.0" />
+      <remove name="OPTIONSVerbHandler" />
+      <remove name="TRACEVerbHandler" />
+      <add name="ExtensionlessUrlHandler-Integrated-4.0"
+           path="*."
+           verb="*"
+           type="System.Web.Handlers.TransferRequestHandler"
+           preCondition="integratedMode,runtimeVersionv4.0" />
+    </handlers>
+    <security>
+      <requestFiltering>
+        <requestLimits maxAllowedContentLength="10485760" />
+      </requestFiltering>
+    </security>
+  </system.webServer>
+
+  <system.net>
+    <mailSettings>
+      <smtp deliveryMethod="Network" from="&lt;YOUR_SMTP_FROM&gt;">
+        <network host="&lt;YOUR_SMTP_HOST&gt;"
+                 port="587"
+                 enableSsl="true"
+                 userName="&lt;YOUR_SMTP_USER&gt;"
+                 password="&lt;YOUR_SMTP_PASSWORD&gt;" />
+      </smtp>
+    </mailSettings>
+  </system.net>
+
+  <runtime>
+    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
+      <dependentAssembly>
+        <assemblyIdentity name="Newtonsoft.Json" publicKeyToken="30ad4fe6b2a6aeed" culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-13.0.0.0" newVersion="13.0.0.0" />
+      </dependentAssembly>
+      <dependentAssembly>
+        <assemblyIdentity name="System.Web.Helpers" publicKeyToken="31bf3856ad364e35" />
+        <bindingRedirect oldVersion="1.0.0.0-3.0.0.0" newVersion="3.0.0.0" />
+      </dependentAssembly>
+      <dependentAssembly>
+        <assemblyIdentity name="System.Web.Mvc" publicKeyToken="31bf3856ad364e35" />
+        <bindingRedirect oldVersion="1.0.0.0-5.2.3.0" newVersion="5.2.3.0" />
+      </dependentAssembly>
+      <dependentAssembly>
+        <assemblyIdentity name="System.Web.WebPages" publicKeyToken="31bf3856ad364e35" />
+        <bindingRedirect oldVersion="1.0.0.0-3.0.0.0" newVersion="3.0.0.0" />
+      </dependentAssembly>
+      <dependentAssembly>
+        <assemblyIdentity name="System.Web.Http" publicKeyToken="31bf3856ad364e35" culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-5.2.3.0" newVersion="5.2.3.0" />
+      </dependentAssembly>
+      <dependentAssembly>
+        <assemblyIdentity name="System.Net.Http.Formatting" publicKeyToken="31bf3856ad364e35" culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-5.2.3.0" newVersion="5.2.3.0" />
+      </dependentAssembly>
+      <dependentAssembly>
+        <assemblyIdentity name="WebGrease" publicKeyToken="31bf3856ad364e35" culture="neutral" />
+        <bindingRedirect oldVersion="0.0.0.0-1.5.2.14234" newVersion="1.5.2.14234" />
+      </dependentAssembly>
+    </assemblyBinding>
+  </runtime>
+
+  <system.codedom>
+    <compilers>
+      <compiler language="c#;cs;csharp"
+                extension=".cs"
+                type="Microsoft.CodeDom.Providers.DotNetCompilerPlatform.CSharpCodeProvider, Microsoft.CodeDom.Providers.DotNetCompilerPlatform, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
+                warningLevel="4"
+                compilerOptions="/langversion:6 /nowarn:1659;1699;1701" />
+      <compiler language="vb;vbs;visualbasic;vbscript"
+                extension=".vb"
+                type="Microsoft.CodeDom.Providers.DotNetCompilerPlatform.VBCodeProvider, Microsoft.CodeDom.Providers.DotNetCompilerPlatform, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"
+                warningLevel="4"
+                compilerOptions="/langversion:14 /nowarn:41008 /define:_MYTYPE=\&quot;Web\&quot; /optionInfer+" />
+    </compilers>
+  </system.codedom>
+
+  <applicationSettings>
+    <OTR_API.Properties.Settings>
+      <setting name="Debug" serializeAs="String">
+        <value>True</value>
+      </setting>
+    </OTR_API.Properties.Settings>
+  </applicationSettings>
+
+  <system.serviceModel>
+    <bindings>
+      <basicHttpBinding>
+        <binding name="FBSCheckCall_InterfaceSoap" />
+      </basicHttpBinding>
+    </bindings>
+    <client>
+      <endpoint address="http://ww2.vectortransport.com/inmotionfbs/CheckCalls.asmx"
+                binding="basicHttpBinding"
+                bindingConfiguration="FBSCheckCall_InterfaceSoap"
+                contract="FBSCheckCallSrv.FBSCheckCall_InterfaceSoap"
+                name="FBSCheckCall_InterfaceSoap" />
+    </client>
+  </system.serviceModel>
+
+</configuration>
