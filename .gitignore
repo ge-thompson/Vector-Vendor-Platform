@@ -75,3 +75,5 @@ _ReSharper.*/
 # The version-controlled reference is Web.config.template; real Web.config is
 # environment-specific and stays local.
 _OTR_API/Web.config
+/_OTR_API/AWS_Web.config
+/_OTR_API/AWS_Web.config

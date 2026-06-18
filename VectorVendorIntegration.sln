@@ -14,6 +14,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Vendor.Common.Dispatch.Smok
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Vendor.FourKites.Smoke", "_test\Vendor.FourKites.Smoke\Vendor.FourKites.Smoke.csproj", "{A1A1A1A1-0001-0001-0001-000000000006}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OTR API", "_OTR_API\OTR API.csproj", "{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_deliverables", "_deliverables", "{B2B2B2B2-0002-0002-0002-000000000001}"
 EndProject
 Global
@@ -46,6 +48,10 @@ Global
 		{A1A1A1A1-0001-0001-0001-000000000006}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1A1A1A1-0001-0001-0001-000000000006}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1A1A1A1-0001-0001-0001-000000000006}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

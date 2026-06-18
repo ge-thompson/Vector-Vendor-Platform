@@ -15,7 +15,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>OTR_API</RootNamespace>
     <AssemblyName>OTR API</AssemblyName>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.8.1</TargetFrameworkVersion>
     <UseIISExpress>true</UseIISExpress>
     <IISExpressSSLPort />
     <IISExpressAnonymousAuthentication />
@@ -25,6 +25,7 @@
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
+    <Use64BitIISExpress />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -57,9 +58,8 @@
       <HintPath>..\packages\Microsoft.Web.Infrastructure.1.0.0.0\lib\net40\Microsoft.Web.Infrastructure.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Newtonsoft.Json, Version=10.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
-      <HintPath>packages\Newtonsoft.Json.10.0.1\lib\net45\Newtonsoft.Json.dll</HintPath>
-      <Private>True</Private>
+    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
     </Reference>
     <Reference Include="Settings">
       <HintPath>..\packages\Settings.dll</HintPath>
@@ -112,11 +112,23 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <!-- Vendor integration framework — project references -->
+    <ProjectReference Include="..\_build\Vendor.Common\Vendor.Common.csproj">
+      <Project>{A1A1A1A1-0001-0001-0001-000000000001}</Project>
+      <Name>Vendor.Common</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\_build\Vendor.FourKites\Vendor.FourKites.csproj">
+      <Project>{A1A1A1A1-0001-0001-0001-000000000002}</Project>
+      <Name>Vendor.FourKites</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
     <Content Include="inmotionreset.aspx" />
     <Content Include="Global.asax" />
     <Content Include="index.html" />
     <Content Include="privacy.html" />
     <Content Include="scripts\jquery-3.2.1.min.map" />
+    <Content Include="AWS_Web.config" />
     <None Include="Service References\FBSCheckCallSrv\CheckCalls.wsdl" />
     <None Include="Service References\FBSCheckCallSrv\configuration91.svcinfo" />
     <None Include="Service References\FBSCheckCallSrv\configuration.svcinfo" />
