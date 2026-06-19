@@ -3,6 +3,7 @@ using System.Configuration;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 using Vendor.Common.Abstractions;
 using Vendor.Common.Configuration;
 using Vendor.Common.Events;
@@ -146,6 +147,47 @@ namespace Vendor.Common.Dispatch
         {
             if (VendorStatusMappingStore.IsInitialized)
                 VendorStatusMappingStore.Instance.Refresh();
+        }
+
+        /// <summary>
+        /// Reads the dispatch verbosity ("Generous" or "Conservative") from the
+        /// ClientProfile.ConfigJson dispatchPolicy.verbosity field. Defaults to
+        /// "Generous" if the field is missing, the profile doesn't exist, or any
+        /// error occurs. Never throws — callers can use the return value directly.
+        ///
+        /// Used by event producers like OTR API's SendStatus to decide whether to
+        /// emit one event per data point (Generous) or just the freshest (Conservative).
+        /// The adapter's rate limiter is the second line of defense against flooding
+        /// vendors regardless of verbosity choice.
+        /// </summary>
+        public string GetDispatchVerbosity(string vendorName, string shipperCode = "VECTOR_DEFAULT")
+        {
+            const string DefaultVerbosity = "Generous";
+            if (string.IsNullOrEmpty(vendorName)) return DefaultVerbosity;
+
+            try
+            {
+                var all = _profileRepository.GetAllProfiles();
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var p = all[i];
+                    if (!p.IsActive) continue;
+                    if (!string.Equals(p.VendorName, vendorName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(p.ShipperCode, shipperCode, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    if (string.IsNullOrWhiteSpace(p.ConfigJson)) return DefaultVerbosity;
+
+                    var jo = JObject.Parse(p.ConfigJson);
+                    var token = jo.SelectToken("dispatchPolicy.verbosity");
+                    var verbosity = token?.ToString();
+                    return string.IsNullOrWhiteSpace(verbosity) ? DefaultVerbosity : verbosity;
+                }
+            }
+            catch (Exception ex)
+            {
+                _onError(ex);
+            }
+            return DefaultVerbosity;
         }
 
         // ─── Instance state ──────────────────────────────────────────────────

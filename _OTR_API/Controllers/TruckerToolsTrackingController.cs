@@ -476,6 +476,73 @@ namespace OTR_API.Controllers
                         da.InsertErrorAuditLog(ex.Message, "TrackLoadStatus");
                     }
 
+                    // ─── Vendor dispatch: status + location ─────────────────
+                    // Fires only on successful inserts. Resolves VectorLoadId via
+                    // dtt.GetLoadTracking. Branches on per-vendor verbosity (DB-driven):
+                    //   Generous     : one event per data point in the TT payload
+                    //   Conservative : freshest location + freshest status
+                    // Adapter rate limiters are the second line of defense regardless.
+                    // Failures here never break the OTR API operation.
+                    try
+                    {
+                        if (response.status)
+                        {
+                            Load lookupLoad = new Load();
+                            lookupLoad.loadNumber = lc.loadNumber;
+                            lookupLoad = dtt.GetLoadTracking(lookupLoad);
+
+                            if (lookupLoad != null && lookupLoad.VectorID > 0)
+                            {
+                                string vectorLoadId = lookupLoad.VectorID.ToString();
+                                string verbosity = Vendor.Common.Dispatch.VendorDispatcher.Instance
+                                    .GetDispatchVerbosity("FourKites");
+                                bool generous = string.Equals(verbosity, "Generous",
+                                    StringComparison.OrdinalIgnoreCase);
+
+                                // Location events
+                                DispatchLocation(vectorLoadId, lc.latestLocation, da);
+                                if (generous)
+                                {
+                                    if (lc.latestStatus != null)
+                                        DispatchLocation(vectorLoadId, lc.latestStatus.location, da);
+                                    if (lc.status != null)
+                                        DispatchLocation(vectorLoadId, lc.status.location, da);
+                                    if (lc.locations != null)
+                                    {
+                                        foreach (Location loc in lc.locations)
+                                            DispatchLocation(vectorLoadId, loc, da);
+                                    }
+                                }
+                                else if (lc.latestLocation == null)
+                                {
+                                    // Conservative + no latestLocation: fall back to embedded location
+                                    Location fallback = null;
+                                    if (lc.latestStatus != null && lc.latestStatus.location != null)
+                                        fallback = lc.latestStatus.location;
+                                    else if (lc.status != null && lc.status.location != null)
+                                        fallback = lc.status.location;
+                                    if (fallback != null)
+                                        DispatchLocation(vectorLoadId, fallback, da);
+                                }
+
+                                // Status events
+                                if (generous)
+                                {
+                                    DispatchStatus(vectorLoadId, lc.latestStatus, da);
+                                    DispatchStatus(vectorLoadId, lc.status, da);
+                                }
+                                else
+                                {
+                                    DispatchStatus(vectorLoadId, lc.latestStatus ?? lc.status, da);
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception vdEx)
+                    {
+                        da.InsertErrorAuditLog(vdEx.Message, "SendStatus.VendorDispatch");
+                    }
+                    // ────────────────────────────────────────────────────
 
                     try
                     {
@@ -598,6 +665,85 @@ namespace OTR_API.Controllers
             }
 
             return response;
+        }
+
+        // ─── Vendor dispatch helpers (used by SendStatus) ────────────────────────────────
+
+        /// <summary>
+        /// Dispatches a LocationReportedEvent if the given TT location has valid coords.
+        /// No-ops on null or empty lat/lon. Errors are logged to DataAudit, never thrown.
+        /// </summary>
+        private void DispatchLocation(string vectorLoadId, Location loc, OTR_API.DataClasses.DataAudit da)
+        {
+            if (loc == null) return;
+            if (string.IsNullOrEmpty(loc.lat) || string.IsNullOrEmpty(loc.lon)) return;
+
+            try
+            {
+                Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                    new Vendor.Common.Events.LocationReportedEvent
+                    {
+                        VectorLoadId = vectorLoadId,
+                        SourceSystem = "OTR_API",
+                        Latitude = loc.lat,
+                        Longitude = loc.lon,
+                        City = loc.city,
+                        State = loc.state,
+                        Country = loc.country,
+                        LocatedAtUtc = TryParseUtc(loc.timeStamp)
+                    });
+            }
+            catch (Exception ex)
+            {
+                da.InsertErrorAuditLog(ex.Message, "SendStatus.VendorDispatch.Location");
+            }
+        }
+
+        /// <summary>
+        /// Dispatches a LoadStatusEvent if the given TT status has a recognizable code.
+        /// Translates TT code to LoadStatusType via TruckToolsStatusMapper. Preserves
+        /// raw code in SourceStatusCode so adapters can pass it through verbatim.
+        /// No-ops on null or empty code/name. Errors are logged to DataAudit, never thrown.
+        /// </summary>
+        private void DispatchStatus(string vectorLoadId, Status status, OTR_API.DataClasses.DataAudit da)
+        {
+            if (status == null) return;
+            string rawCode = !string.IsNullOrEmpty(status.code) ? status.code : status.name;
+            if (string.IsNullOrEmpty(rawCode)) return;
+
+            try
+            {
+                Vendor.Common.Events.LoadStatusType statusType =
+                    OTR_API.DataClasses.TruckToolsStatusMapper.Map(rawCode);
+
+                Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                    new Vendor.Common.Events.LoadStatusEvent
+                    {
+                        VectorLoadId = vectorLoadId,
+                        SourceSystem = "OTR_API",
+                        StatusType = statusType,
+                        StatusTimeUtc = TryParseUtc(status.timeStamp),
+                        SourceStatusCode = status.code,
+                        SourceStatusDescription = status.name
+                    });
+            }
+            catch (Exception ex)
+            {
+                da.InsertErrorAuditLog(ex.Message, "SendStatus.VendorDispatch.Status");
+            }
+        }
+
+        /// <summary>
+        /// Parses a TT timestamp string to DateTime UTC. Falls back to DateTime.UtcNow
+        /// if the string is empty or unparseable so the event still carries a sensible
+        /// timestamp.
+        /// </summary>
+        private DateTime TryParseUtc(string s)
+        {
+            DateTime parsed;
+            if (!string.IsNullOrEmpty(s) && DateTime.TryParse(s, out parsed))
+                return parsed.ToUniversalTime();
+            return DateTime.UtcNow;
         }
     }
 }
