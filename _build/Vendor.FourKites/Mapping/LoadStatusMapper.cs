@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Vendor.Common.Events;
+using Vendor.Common.Persistence;
 
 namespace Vendor.FourKites.Mapping
 {
@@ -67,10 +68,20 @@ namespace Vendor.FourKites.Mapping
 
         /// <summary>
         /// Returns the canonical FK EDI 214 code for the given LoadStatusType.
-        /// Returns "X9" (Other) for unknown values — adapter then falls back to SourceStatusCode.
+        /// Checks the DB override cache first; falls back to the hardcoded template;
+        /// returns "X9" (Other) if neither matches — adapter then falls back to SourceStatusCode.
         /// </summary>
         public static string MapStatusType(LoadStatusType statusType)
         {
+            // DB override check (only if dispatcher has initialized the cache).
+            if (VendorStatusMappingStore.IsInitialized)
+            {
+                var dbOverride = VendorStatusMappingStore.Instance.GetOutbound("FourKites", statusType.ToString());
+                if (!string.IsNullOrEmpty(dbOverride))
+                    return dbOverride;
+            }
+
+            // Hardcoded template fallback.
             return CanonicalCodes.TryGetValue(statusType, out var code) ? code : "X9";
         }
 

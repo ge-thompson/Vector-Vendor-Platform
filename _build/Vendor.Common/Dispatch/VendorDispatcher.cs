@@ -84,6 +84,11 @@ namespace Vendor.Common.Dispatch
                         "AppSetting 'VendorDispatch.AuditConnectionString' is required. " +
                         "Set it in Web.config / App.config to your VendorAPI_FK connection string.");
 
+                // Initialize the status-mapping cache early. Errors during load surface via
+                // errorHandler but never block startup — mapper code falls back to hardcoded
+                // templates if the cache is empty.
+                VendorStatusMappingStore.Initialize(connectionString, errorHandler);
+
                 var enabled = ParseBoolAppSetting("VendorDispatch.Enabled", defaultValue: true);
                 var fireAndForget = ParseBoolAppSetting("VendorDispatch.FireAndForget", defaultValue: true);
 
@@ -129,6 +134,18 @@ namespace Vendor.Common.Dispatch
         public static void ResetForTesting()
         {
             lock (_initLock) { _instance = null; }
+        }
+
+        /// <summary>
+        /// Refreshes the status-mapping cache from the database. Call this after
+        /// editing rows in dbo.VendorStatusMapping to apply changes without restarting
+        /// the host application. Safe to call concurrently with active dispatches —
+        /// the cache swap is atomic.
+        /// </summary>
+        public void RefreshStatusMappings()
+        {
+            if (VendorStatusMappingStore.IsInitialized)
+                VendorStatusMappingStore.Instance.Refresh();
         }
 
         // ─── Instance state ──────────────────────────────────────────────────

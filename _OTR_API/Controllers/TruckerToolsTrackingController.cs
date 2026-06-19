@@ -48,6 +48,40 @@ namespace OTR_API.Controllers
                         response.response.TrackingID = LoadID;
 
                         dtt.InsertLoadResponse(response);
+
+                        // ─── Vendor dispatch: load assignment ─────────────────
+                        // Notify configured vendors (FourKites in Phase 1) that an
+                        // assignment exists. Idempotent across re-fires. Failures
+                        // here never break the OTR API operation.
+                        try
+                        {
+                            Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                                new Vendor.Common.Events.LoadAssignedEvent
+                                {
+                                    VectorLoadId = load.VectorID.ToString(),
+                                    SourceSystem = "OTR_API",
+                                    Carrier = load.carrier == null ? null : new Vendor.Common.Events.CarrierInfo
+                                    {
+                                        Name = load.carrier.companyName,
+                                        McNumber = load.carrier.docketNumber
+                                    },
+                                    Driver = new Vendor.Common.Events.DriverInfo
+                                    {
+                                        Name = load.driverName,
+                                        Phone = load.driverCell
+                                    },
+                                    Equipment = new Vendor.Common.Events.EquipmentInfo
+                                    {
+                                        TruckNumber = load.truckNumber,
+                                        TrailerNumber = load.trailerNumber
+                                    }
+                                });
+                        }
+                        catch (Exception vdEx)
+                        {
+                            da.InsertErrorAuditLog(vdEx.Message, "TrackLoad.VendorDispatch");
+                        }
+                        // ──────────────────────────────────────────────────────
                     }
                     catch (Exception ex)
                     {
@@ -96,6 +130,41 @@ namespace OTR_API.Controllers
                         response.response.TrackingID = LoadID;
 
                         dtt.InsertLoadResponse(response);
+
+                        // ─── Vendor dispatch: load assignment (update) ──────────
+                        // Re-dispatch the assignment after an update. LoadAssignedEvent
+                        // is idempotent across re-fires — adapters overwrite the prior
+                        // assignment on the vendor side. Failures here never break the
+                        // OTR API operation.
+                        try
+                        {
+                            Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                                new Vendor.Common.Events.LoadAssignedEvent
+                                {
+                                    VectorLoadId = load.VectorID.ToString(),
+                                    SourceSystem = "OTR_API",
+                                    Carrier = load.carrier == null ? null : new Vendor.Common.Events.CarrierInfo
+                                    {
+                                        Name = load.carrier.companyName,
+                                        McNumber = load.carrier.docketNumber
+                                    },
+                                    Driver = new Vendor.Common.Events.DriverInfo
+                                    {
+                                        Name = load.driverName,
+                                        Phone = load.driverCell
+                                    },
+                                    Equipment = new Vendor.Common.Events.EquipmentInfo
+                                    {
+                                        TruckNumber = load.truckNumber,
+                                        TrailerNumber = load.trailerNumber
+                                    }
+                                });
+                        }
+                        catch (Exception vdEx)
+                        {
+                            da.InsertErrorAuditLog(vdEx.Message, "UpdateTrackLoad.VendorDispatch");
+                        }
+                        // ──────────────────────────────────────────────────────
                     }
                     catch (Exception ex)
                     {
@@ -142,6 +211,25 @@ namespace OTR_API.Controllers
                         response.response.TrackingID = TrackingID;
 
                         dtt.InsertLoadResponse(response);
+
+                        // ─── Vendor dispatch: tracking stopped ────────────────
+                        // Notify configured vendors that tracking has been cancelled.
+                        // Failures here never break the OTR API operation.
+                        try
+                        {
+                            Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                                new Vendor.Common.Events.LoadTrackingStoppedEvent
+                                {
+                                    VectorLoadId = load.VectorID.ToString(),
+                                    SourceSystem = "OTR_API",
+                                    Reason = "CANCELLED"
+                                });
+                        }
+                        catch (Exception vdEx)
+                        {
+                            da.InsertErrorAuditLog(vdEx.Message, "CancelLoadTracking.VendorDispatch");
+                        }
+                        // ──────────────────────────────────────────────────────
                     }
                     catch (Exception ex)
                     {

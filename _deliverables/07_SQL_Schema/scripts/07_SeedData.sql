@@ -21,6 +21,9 @@ DECLARE @ConfigJson NVARCHAR(MAX) = N'{
     "billToCode": "REPLACE_WITH_FK_BILLTOCODE",
     "baseUrl": "https://api.fourkites.com",
     "timeoutSeconds": 15,
+    "dispatchPolicy": {
+        "verbosity": "Generous"
+    },
     "webhookAuth": {
         "mode": "apikey",
         "headerName": "X-FourKites-Token",

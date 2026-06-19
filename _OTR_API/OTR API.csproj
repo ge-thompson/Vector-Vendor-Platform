@@ -181,6 +181,7 @@
     <Compile Include="DataClasses\FireBaseNotifcation.cs" />
     <Compile Include="DataClasses\AES256CBCEncrypt.cs" />
     <Compile Include="DataClasses\WebCallFunctions.cs" />
+    <Compile Include="DataClasses\TruckToolsStatusMapper.cs" />
     <Compile Include="inmotionreset.aspx.cs">
       <DependentUpon>inmotionreset.aspx</DependentUpon>
       <SubType>ASPXCodeBehind</SubType>
