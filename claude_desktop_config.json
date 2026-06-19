@@ -1,0 +1,94 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--user-data-dir=C:\\playwright-mcp-profile"
+      ]
+    },
+    "ftsqb-project": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\FTSQBInterface\\FTSQB"
+      ]
+    },
+    "AIM-project": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\MMBCM"
+      ]
+    },
+    "DATv2": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\WS7MAC\\DAT\\DATv2"
+      ]
+    },
+    "4Kites-project": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\Vector-Vendor-Platform"
+      ]
+    },
+    "localdb-sql-server": {
+      "command": "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\MMBCM\\MCP_Localdb\\SqlServerMcp.exe"
+    },
+    "vector-otr-fbs-sql": {
+      "command": "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\Vector-Vendor-Platform\\MCP_vector-otr-fbs-sql\\SqlServerMcp.exe"
+    },
+    "vector-otr-sql": {
+      "command": "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\Vector-Vendor-Platform\\MCP_vector-otr-sql\\SqlServerMcp.exe"
+    },
+    "vector-otr-tt-sql": {
+      "command": "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\Vector-Vendor-Platform\\MCP_vector-otr-tt-sql\\SqlServerMcp.exe"
+    },
+    "UNFI-localdb-sql-server": {
+      "command": "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\Vector-Vendor-Platform\\MCP_LocaldbFK\\SqlServerMcp.exe"
+    },
+    "Timberlake-sql-server": {
+      "command": "C:\\Users\\Glen Thompson\\Documents\\TFSProjects\\FTSQBInterface\\MCP_Timberlake\\SqlServerMcp.exe"
+    }
+  },
+  "coworkUserFilesPath": "C:\\Users\\Glen Thompson\\Claude",
+  "preferences": {
+    "coworkScheduledTasksEnabled": false,
+    "ccdScheduledTasksEnabled": true,
+    "bypassPermissionsGateByAccount": {
+      "9acefc8d-3a8a-4cf5-8159-74e0fc6101b5": false
+    },
+    "coworkWebSearchEnabled": true,
+    "coworkModelAutoFallbackByAccount": {
+      "9acefc8d-3a8a-4cf5-8159-74e0fc6101b5": true
+    },
+    "remoteToolsDeviceName": "desktop-4dea4ap",
+    "epitaxyPrefs": {
+      "starred-local-code-sessions": [],
+      "starred-cowork-spaces": [],
+      "starred-session-groups": [],
+      "dframe-local-slice": {
+        "pinnedOrder": [],
+        "customGroupAssignments": {},
+        "customGroupOrder": {}
+      }
+    },
+    "coworkHipaaRestricted": false
+  }
+}

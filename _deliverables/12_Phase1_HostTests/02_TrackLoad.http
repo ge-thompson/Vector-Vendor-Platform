@@ -1,0 +1,67 @@
+### TrackLoad -> LoadAssignedEvent
+###
+### NOTE: Tracking SP columns loadNumber and loadTrackExternalId are varchar(10).
+### Production convention is loadNumber == VectorID (as string). Keep test IDs short.
+### dispatcherId is REQUIRED (no default in spTracking_Insert).
+
+POST http://localhost:5129/api/truckertoolstracking/TrackLoad
+Content-Type: application/json
+
+{
+    "VectorID": 999001,
+    "loadNumber": "999001",
+    "loadTrackExternalId": "999001",
+    "dispatcherId": "Test Dispatcher",
+    "dispatcherEmail": "test@vectortransport.com",
+    "dispatcherPhoneNumber": "555-0001",
+    "carrier": {
+        "companyName": "Test Carrier LLC",
+        "docketNumber": "MC-999001"
+    },
+    "driverName": "Test Driver",
+    "driverCell": "555-0100",
+    "truckNumber": "TRUCK-001",
+    "trailerNumber": "TRL-001",
+    "shipper": {
+        "shipperId": "0",
+        "emails": "",
+        "emailInterval": "",
+        "referenceNumber": ""
+    },
+    "stops": [
+        {
+            "lat": "35.1495",
+            "lon": "-90.0490",
+            "city": "Memphis",
+            "state": "TN",
+            "datetime": "2026-01-15 08:00:00",
+            "datetimeExit": "2026-01-15 16:00:00"
+        },
+        {
+            "lat": "36.1627",
+            "lon": "-86.7816",
+            "city": "Nashville",
+            "state": "TN",
+            "datetime": "2026-01-16 08:00:00",
+            "datetimeExit": "2026-01-16 16:00:00"
+        }
+    ]
+}
+
+###
+# Expected (VendorDispatch.Enabled=true):
+#   - HTTP 200 with TrackingResponse, response.TrackingID > 0 (Tracking row landed)
+#   - 1 NEW row in VendorAPI_FK.dbo.VendorOutboundTransactions:
+#       EventTypeName  = 'LoadAssignedEvent'
+#       VendorName     = 'FourKites'
+#       VectorLoadId   = '999001'
+#       Status         = 'HTTP_FAIL'  (placeholder FK URL)
+#       RequestPayload = enriched: carrier, driver, equipment, shipper,
+#                        dispatcher, stops[2] (pickup + delivery roles)
+#
+# Verify with query #1 in 99_VerifySQL.sql.
+#
+# curl equivalent (Windows cmd):
+#   curl -X POST http://localhost:5129/api/truckertoolstracking/TrackLoad ^
+#     -H "Content-Type: application/json" ^
+#     -d "{\"VectorID\":999001,\"loadNumber\":\"999001\",\"loadTrackExternalId\":\"999001\",\"dispatcherId\":\"Test Dispatcher\",\"dispatcherEmail\":\"test@vectortransport.com\",\"dispatcherPhoneNumber\":\"555-0001\",\"carrier\":{\"companyName\":\"Test Carrier LLC\",\"docketNumber\":\"MC-999001\"},\"driverName\":\"Test Driver\",\"driverCell\":\"555-0100\",\"truckNumber\":\"TRUCK-001\",\"trailerNumber\":\"TRL-001\",\"shipper\":{\"shipperId\":\"0\",\"emails\":\"\",\"emailInterval\":\"\",\"referenceNumber\":\"\"},\"stops\":[{\"lat\":\"35.1495\",\"lon\":\"-90.0490\",\"city\":\"Memphis\",\"state\":\"TN\",\"datetime\":\"2026-01-15 08:00:00\",\"datetimeExit\":\"2026-01-15 16:00:00\"},{\"lat\":\"36.1627\",\"lon\":\"-86.7816\",\"city\":\"Nashville\",\"state\":\"TN\",\"datetime\":\"2026-01-16 08:00:00\",\"datetimeExit\":\"2026-01-16 16:00:00\"}]}"

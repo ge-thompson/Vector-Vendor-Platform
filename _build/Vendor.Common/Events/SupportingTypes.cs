@@ -24,6 +24,18 @@ namespace Vendor.Common.Events
         public string PostalCode { get; set; }
         public string Country { get; set; }
 
+        /// <summary>Latitude as string (precision-preserving). Optional.</summary>
+        public string Latitude { get; set; }
+
+        /// <summary>Longitude as string (precision-preserving). Optional.</summary>
+        public string Longitude { get; set; }
+
+        /// <summary>Free-text notes attached to the stop. Optional.</summary>
+        public string Notes { get; set; }
+
+        /// <summary>External stop identifier from the originating system. Optional.</summary>
+        public string ExternalStopId { get; set; }
+
         /// <summary>Scheduled arrival in UTC. Null if not yet scheduled.</summary>
         public DateTime? ScheduledArrivalUtc { get; set; }
 
@@ -55,6 +67,12 @@ namespace Vendor.Common.Events
         public string Name { get; set; }
         public string Phone { get; set; }
         public string Email { get; set; }
+
+        /// <summary>Driver-type indicator from the source system (e.g., "company", "owner-operator", "team"). Optional, free text.</summary>
+        public string DriverType { get; set; }
+
+        /// <summary>Free-text driver notes/comments propagated from the source system. Optional.</summary>
+        public string Comments { get; set; }
     }
 
     /// <summary>Equipment information for a load assignment.</summary>
@@ -67,6 +85,38 @@ namespace Vendor.Common.Events
         public string Vin { get; set; }
 
         public string LicensePlate { get; set; }
+
+        /// <summary>Trailer type (e.g., "DRY_VAN", "REEFER", "FLATBED"). Free text; vendor adapters map as needed.</summary>
+        public string TrailerType { get; set; }
+    }
+
+    /// <summary>
+    /// Dispatcher contact information for a load assignment. Optional sub-record on
+    /// LoadAssignedEvent so vendors can reach back if they need to coordinate.
+    /// </summary>
+    public class DispatcherInfo
+    {
+        /// <summary>Internal dispatcher identifier from the source system. Optional.</summary>
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string Email { get; set; }
+        public string Phone { get; set; }
+    }
+
+    /// <summary>
+    /// Shipper information for a load assignment. The shipper is the customer
+    /// originating the freight (UNFI, Altium, etc. in Vector's world). Optional sub-record.
+    /// </summary>
+    public class ShipperInfo
+    {
+        /// <summary>Shipper identifier (customer code or numeric ID). Optional.</summary>
+        public string ShipperId { get; set; }
+
+        /// <summary>Customer-facing reference number for this load (often the shipper's PO/order number).</summary>
+        public string ReferenceNumber { get; set; }
+
+        /// <summary>Comma-separated email list the shipper expects notifications on. Optional.</summary>
+        public string NotificationEmails { get; set; }
     }
 
     /// <summary>

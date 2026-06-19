@@ -1,0 +1,38 @@
+### CancelLoadTracking -> LoadTrackingStoppedEvent (Reason: CANCELLED)
+###
+### Separate VectorID from the TrackLoad tests so its row count is unambiguous.
+
+POST http://localhost:5129/api/truckertoolstracking/CancelLoadTracking
+Content-Type: application/json
+
+{
+    "VectorID": 999002,
+    "loadNumber": "999002",
+    "loadTrackExternalId": "999002",
+    "carrier": {
+        "companyName": "Test Carrier LLC",
+        "docketNumber": "MC-999002"
+    },
+    "driverName": "Test Driver",
+    "driverCell": "555-0100",
+    "shipper": {
+        "shipperId": "0",
+        "emails": "",
+        "emailInterval": "",
+        "referenceNumber": ""
+    }
+}
+
+###
+# Expected:
+#   - HTTP 200 with TrackingResponse
+#   - 1 row in VendorOutboundTransactions for VectorLoadId='999002':
+#       EventTypeName  = 'LoadTrackingStoppedEvent'
+#       RequestPayload reason = "CANCELLED"
+#
+# Verify with query #3 in 99_VerifySQL.sql.
+#
+# curl equivalent:
+#   curl -X POST http://localhost:5129/api/truckertoolstracking/CancelLoadTracking ^
+#     -H "Content-Type: application/json" ^
+#     -d "{\"VectorID\":999002,\"loadNumber\":\"999002\",\"loadTrackExternalId\":\"999002\",\"carrier\":{\"companyName\":\"Test Carrier LLC\",\"docketNumber\":\"MC-999002\"},\"driverName\":\"Test Driver\",\"driverCell\":\"555-0100\",\"shipper\":{\"shipperId\":\"0\",\"emails\":\"\",\"emailInterval\":\"\",\"referenceNumber\":\"\"}}"

@@ -1,0 +1,63 @@
+### UpdateTrackLoad -> LoadAssignedEvent (idempotent re-fire)
+###
+### Same VectorID/loadNumber as 02_TrackLoad to simulate driver reassignment.
+### Run 02_TrackLoad first so the Tracking row exists.
+
+POST http://localhost:5129/api/truckertoolstracking/UpdateTrackLoad
+Content-Type: application/json
+
+{
+    "VectorID": 999001,
+    "loadNumber": "999001",
+    "loadTrackExternalId": "999001",
+    "dispatcherId": "Test Dispatcher",
+    "dispatcherEmail": "test@vectortransport.com",
+    "dispatcherPhoneNumber": "555-0001",
+    "carrier": {
+        "companyName": "Test Carrier LLC",
+        "docketNumber": "MC-999001"
+    },
+    "driverName": "Replacement Driver",
+    "driverCell": "555-0199",
+    "truckNumber": "TRUCK-001",
+    "trailerNumber": "TRL-001",
+    "shipper": {
+        "shipperId": "0",
+        "emails": "",
+        "emailInterval": "",
+        "referenceNumber": ""
+    },
+    "stops": [
+        {
+            "lat": "35.1495",
+            "lon": "-90.0490",
+            "city": "Memphis",
+            "state": "TN",
+            "datetime": "2026-01-15 08:00:00",
+            "datetimeExit": "2026-01-15 16:00:00"
+        },
+        {
+            "lat": "36.1627",
+            "lon": "-86.7816",
+            "city": "Nashville",
+            "state": "TN",
+            "datetime": "2026-01-16 08:00:00",
+            "datetimeExit": "2026-01-16 16:00:00"
+        }
+    ]
+}
+
+###
+# Expected:
+#   - HTTP 200 with TrackingResponse, TrackingID returns existing Tracking row ID
+#     (spTracking_Insert detects existing VectorID and routes through spTracking_Update)
+#   - 1 ADDITIONAL row in VendorOutboundTransactions for VectorLoadId='999001'
+#     EventTypeName  = 'LoadAssignedEvent' (same type -- idempotent on vendor side)
+#     RequestPayload driver.name == "Replacement Driver", driver.phone == "555-0199"
+#
+# Verify with query #2 in 99_VerifySQL.sql (LoadAssignedCount >= 2).
+#
+# curl equivalent:
+#   curl -X POST http://localhost:5129/api/truckertoolstracking/UpdateTrackLoad ^
+#     -H "Content-Type: application/json" ^
+#     -d "{\"VectorID\":999001,\"loadNumber\":\"999001\",\"loadTrackExternalId\":\"999001\",\"dispatcherId\":\"Test Dispatcher\",\"dispatcherEmail\":\"test@vectortransport.com\",\"dispatcherPhoneNumber\":\"555-0001\",\"carrier\":{\"companyName\":\"Test Carrier LLC\",\"docketNumber\":\"MC-999001\"},\"driverName\":\"Replacement Driver\",\"driverCell\":\"555-0199\",\"truckNumber\":\"TRUCK-001\",\"trailerNumber\":\"TRL-001\",\"shipper\":{\"shipperId\":\"0\",\"emails\":\"\",\"emailInterval\":\"\",\"referenceNumber\":\"\"},\"stops\":[{\"lat\":\"35.1495\",\"lon\":\"-90.0490\",\"city\":\"Memphis\",\"state\":\"TN\",\"datetime\":\"2026-01-15 08:00:00\",\"datetimeExit\":\"2026-01-15 16:00:00\"},{\"lat\":\"36.1627\",\"lon\":\"-86.7816\",\"city\":\"Nashville\",\"state\":\"TN\",\"datetime\":\"2026-01-16 08:00:00\",\"datetimeExit\":\"2026-01-16 16:00:00\"}]}"

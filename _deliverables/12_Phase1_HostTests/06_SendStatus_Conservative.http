@@ -1,0 +1,92 @@
+### SendStatus -> freshest-only in Conservative verbosity
+###
+### REQUIRES:
+###   1. 02_TrackLoad.http run first so loadNumber 999001 exists in Tracking
+###   2. ClientProfile flipped to Conservative AND OTR API restarted (ClientProfile
+###      cache reload requires restart):
+###
+###      UPDATE VendorAPI_FK.dbo.ClientProfiles
+###      SET    ConfigJson = JSON_MODIFY(ConfigJson, '$.dispatchPolicy.verbosity', 'Conservative')
+###      WHERE  VendorName = 'FourKites' AND ShipperCode = 'VECTOR_DEFAULT';
+###
+###      Then stop / start the OTR API process (Ctrl+F5 in VS, or kill / restart IIS Express).
+
+POST http://localhost:5129/api/truckertoolstracking/SendStatus
+Content-Type: application/json
+
+{
+    "partnerid": 143,
+    "accountid": "4Ly94/tNcLoELyhI1+6WXA==",
+    "loadTrackExternalId": 999001,
+    "ltExternalId": "999001-LT",
+    "driverPhone": "555-0100",
+    "eventType": "STATUS_UPDATE",
+    "loadNumber": "999001",
+    "latestLocation": {
+        "lat": "36.1627",
+        "lon": "-86.7816",
+        "city": "Nashville",
+        "state": "TN",
+        "country": "US",
+        "timeStamp": "2026-01-15 14:00:00",
+        "timeStampSec": "1736956800"
+    },
+    "latestStatus": {
+        "name": "Arrived Delivery",
+        "code": "ARRIVED_DELIVERY",
+        "timeStamp": "2026-01-15 14:00:00",
+        "timeStampSec": "1736956800",
+        "location": {
+            "lat": "36.1620",
+            "lon": "-86.7810",
+            "city": "Nashville",
+            "state": "TN",
+            "country": "US",
+            "timeStamp": "2026-01-15 14:00:00"
+        },
+        "type": 1
+    },
+    "status": {
+        "name": "Delivered",
+        "code": "DELIVERED",
+        "timeStamp": "2026-01-15 14:30:00",
+        "timeStampSec": "1736958600",
+        "location": {
+            "lat": "36.1622",
+            "lon": "-86.7812",
+            "city": "Nashville",
+            "state": "TN",
+            "country": "US",
+            "timeStamp": "2026-01-15 14:30:00"
+        },
+        "type": 2
+    },
+    "locations": [
+        {
+            "lat": "35.8400",
+            "lon": "-86.9000",
+            "city": "Franklin",
+            "state": "TN",
+            "country": "US",
+            "timeStamp": "2026-01-15 13:30:00"
+        }
+    ]
+}
+
+###
+# Expected (Conservative verbosity):
+#   - HTTP 200 with StatusResponse, status=true
+#   - 2 NEW rows for VectorLoadId='999001':
+#       LocationReportedEvent x 1  (latestLocation only)
+#       LoadStatusEvent       x 1  (latestStatus, preferred over status)
+#
+# Compare to Generous (file 05):
+#   Generous     => 7 events
+#   Conservative => 2 events
+#
+# Verify with query #5 in 99_VerifySQL.sql.
+#
+# When done, flip back to Generous and restart again:
+#   UPDATE VendorAPI_FK.dbo.ClientProfiles
+#   SET    ConfigJson = JSON_MODIFY(ConfigJson, '$.dispatchPolicy.verbosity', 'Generous')
+#   WHERE  VendorName = 'FourKites' AND ShipperCode = 'VECTOR_DEFAULT';

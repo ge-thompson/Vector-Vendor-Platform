@@ -49,33 +49,14 @@ namespace OTR_API.Controllers
 
                         dtt.InsertLoadResponse(response);
 
-                        // ─── Vendor dispatch: load assignment ─────────────────
+                        // ─── Vendor check call: load assignment ───────────────
                         // Notify configured vendors (FourKites in Phase 1) that an
                         // assignment exists. Idempotent across re-fires. Failures
                         // here never break the OTR API operation.
                         try
                         {
                             Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
-                                new Vendor.Common.Events.LoadAssignedEvent
-                                {
-                                    VectorLoadId = load.VectorID.ToString(),
-                                    SourceSystem = "OTR_API",
-                                    Carrier = load.carrier == null ? null : new Vendor.Common.Events.CarrierInfo
-                                    {
-                                        Name = load.carrier.companyName,
-                                        McNumber = load.carrier.docketNumber
-                                    },
-                                    Driver = new Vendor.Common.Events.DriverInfo
-                                    {
-                                        Name = load.driverName,
-                                        Phone = load.driverCell
-                                    },
-                                    Equipment = new Vendor.Common.Events.EquipmentInfo
-                                    {
-                                        TruckNumber = load.truckNumber,
-                                        TrailerNumber = load.trailerNumber
-                                    }
-                                });
+                                BuildLoadAssignedEvent(load));
                         }
                         catch (Exception vdEx)
                         {
@@ -131,34 +112,15 @@ namespace OTR_API.Controllers
 
                         dtt.InsertLoadResponse(response);
 
-                        // ─── Vendor dispatch: load assignment (update) ──────────
-                        // Re-dispatch the assignment after an update. LoadAssignedEvent
+                        // ─── Vendor check call: load assignment (update) ──────────
+                        // Re-fire the assignment after an update. LoadAssignedEvent
                         // is idempotent across re-fires — adapters overwrite the prior
                         // assignment on the vendor side. Failures here never break the
                         // OTR API operation.
                         try
                         {
                             Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
-                                new Vendor.Common.Events.LoadAssignedEvent
-                                {
-                                    VectorLoadId = load.VectorID.ToString(),
-                                    SourceSystem = "OTR_API",
-                                    Carrier = load.carrier == null ? null : new Vendor.Common.Events.CarrierInfo
-                                    {
-                                        Name = load.carrier.companyName,
-                                        McNumber = load.carrier.docketNumber
-                                    },
-                                    Driver = new Vendor.Common.Events.DriverInfo
-                                    {
-                                        Name = load.driverName,
-                                        Phone = load.driverCell
-                                    },
-                                    Equipment = new Vendor.Common.Events.EquipmentInfo
-                                    {
-                                        TruckNumber = load.truckNumber,
-                                        TrailerNumber = load.trailerNumber
-                                    }
-                                });
+                                BuildLoadAssignedEvent(load));
                         }
                         catch (Exception vdEx)
                         {
@@ -668,6 +630,137 @@ namespace OTR_API.Controllers
         }
 
         // ─── Vendor dispatch helpers (used by SendStatus) ────────────────────────────────
+
+        /// <summary>
+        /// Builds a fully-populated LoadAssignedEvent from a tracking Load. Used by both
+        /// TrackLoad and UpdateTrackLoad insertion points so the payload they send is
+        /// identical in shape. Pulls every field the tracking model has available; null
+        /// fields stay null in the event (and are dropped by the FK adapter where
+        /// appropriate).
+        /// </summary>
+        private Vendor.Common.Events.LoadAssignedEvent BuildLoadAssignedEvent(Load load)
+        {
+            return new Vendor.Common.Events.LoadAssignedEvent
+            {
+                VectorLoadId   = load.VectorID.ToString(),
+                SourceSystem   = "OTR_API",
+                ExternalLoadId = load.loadTrackExternalId,
+                LoadType       = load.loadType,
+                TrailerType    = load.trailerType,
+                LoadNotes      = load.loadNotes,
+                IsTeamLoad     = load.isTeamLoad,
+
+                Carrier = load.carrier == null ? null : new Vendor.Common.Events.CarrierInfo
+                {
+                    Name      = load.carrier.companyName,
+                    McNumber  = load.carrier.docketNumber
+                    // scac/dotNumber not on the tracking Carrier model
+                },
+
+                Driver = new Vendor.Common.Events.DriverInfo
+                {
+                    Name       = load.driverName,
+                    Phone      = load.driverCell,
+                    DriverType = load.driverType,
+                    Comments   = load.driverComments
+                    // email not on tracking model
+                },
+
+                Equipment = new Vendor.Common.Events.EquipmentInfo
+                {
+                    TruckNumber   = load.truckNumber,
+                    TrailerNumber = load.trailerNumber,
+                    TrailerType   = load.trailerType
+                    // vin/licensePlate not on tracking model
+                },
+
+                Dispatcher = new Vendor.Common.Events.DispatcherInfo
+                {
+                    Id    = load.dispatcherId,
+                    Email = load.dispatcherEmail,
+                    Phone = load.dispatcherPhoneNumber
+                    // dispatcher Name not on tracking model
+                },
+
+                Shipper = load.shipper == null ? null : new Vendor.Common.Events.ShipperInfo
+                {
+                    ShipperId          = load.shipper.shipperId,
+                    ReferenceNumber    = load.shipper.referenceNumber,
+                    NotificationEmails = load.shipper.emails
+                },
+
+                Stops = BuildStopInfoList(load.stops)
+            };
+        }
+
+        /// <summary>
+        /// Converts a tracking Stop list into the framework's StopInfo list. Assigns
+        /// pickup/delivery/intermediate roles by position (first = pickup, last = delivery,
+        /// middle = intermediate). Datetimes are parsed best-effort; unparseable strings
+        /// yield null UTC times (vendor still sees the raw values via notes).
+        /// </summary>
+        private List<Vendor.Common.Events.StopInfo> BuildStopInfoList(List<Stop> stops)
+        {
+            if (stops == null || stops.Count == 0) return null;
+
+            var result = new List<Vendor.Common.Events.StopInfo>(stops.Count);
+            int last = stops.Count - 1;
+
+            for (int i = 0; i < stops.Count; i++)
+            {
+                var s = stops[i];
+                if (s == null) continue;
+
+                Vendor.Common.Events.StopRole role;
+                if (i == 0) role = Vendor.Common.Events.StopRole.Pickup;
+                else if (i == last) role = Vendor.Common.Events.StopRole.Delivery;
+                else role = Vendor.Common.Events.StopRole.Intermediate;
+
+                result.Add(new Vendor.Common.Events.StopInfo
+                {
+                    SequenceNumber       = i + 1,
+                    Role                 = role,
+                    AddressLine1         = s.address,
+                    City                 = s.city,
+                    State                = s.state,
+                    PostalCode           = s.zipcode,
+                    Latitude             = s.lat.ToString(),
+                    Longitude            = s.lon.ToString(),
+                    Notes                = s.notes,
+                    ExternalStopId       = s.stopExternalId,
+                    ScheduledArrivalUtc  = TryParseStopUtc(s.datetime),
+                    ScheduledDepartureUtc= TryParseStopUtc(s.datetimeExit)
+                });
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Stop times in the tracking model may carry a trailing TZ abbreviation
+        /// (e.g., "2026-01-15 08:00:00 CST") that DateTime.TryParse may or may not
+        /// handle depending on locale. Try the raw string; on failure, try stripping
+        /// trailing tokens; give up and return null. Caller treats null as "unscheduled".
+        /// </summary>
+        private DateTime? TryParseStopUtc(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+
+            DateTime parsed;
+            if (DateTime.TryParse(s, out parsed))
+                return parsed.ToUniversalTime();
+
+            // Strip trailing word (likely TZ abbreviation) and retry.
+            int lastSpace = s.LastIndexOf(' ');
+            if (lastSpace > 0)
+            {
+                string trimmed = s.Substring(0, lastSpace).Trim();
+                if (DateTime.TryParse(trimmed, out parsed))
+                    return parsed.ToUniversalTime();
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Dispatches a LocationReportedEvent if the given TT location has valid coords.

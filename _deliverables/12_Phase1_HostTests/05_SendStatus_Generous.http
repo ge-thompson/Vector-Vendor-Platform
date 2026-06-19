@@ -1,0 +1,90 @@
+### SendStatus -> 7 events in Generous verbosity
+###
+### REQUIRES:
+###   1. 02_TrackLoad.http run first so loadNumber 999001 exists in Tracking
+###   2. VerifyTrackingAccount needs partnerid=143, accountid=4Ly94/tNcLoELyhI1+6WXA==
+###      These match TTTrackingPartnerID / TTTrackingAccountID hardcoded in
+###      WebCallFunctions.cs. Use real TT credentials when testing against real TT
+###      callback traffic.
+###   3. Required SP-side fields: ltExternalId, driverPhone (else AddWithValue drops
+###      the parameter and spStatusLoadTracking_Insert errors).
+
+POST http://localhost:5129/api/truckertoolstracking/SendStatus
+Content-Type: application/json
+
+{
+    "partnerid": 143,
+    "accountid": "4Ly94/tNcLoELyhI1+6WXA==",
+    "loadTrackExternalId": 999001,
+    "ltExternalId": "999001-LT",
+    "driverPhone": "555-0100",
+    "eventType": "STATUS_UPDATE",
+    "loadNumber": "999001",
+    "latestLocation": {
+        "lat": "35.1495",
+        "lon": "-90.0490",
+        "city": "Memphis",
+        "state": "TN",
+        "country": "US",
+        "timeStamp": "2026-01-15 10:00:00",
+        "timeStampSec": "1736942400"
+    },
+    "latestStatus": {
+        "name": "Arrived Pickup",
+        "code": "ARRIVED_PICKUP",
+        "timeStamp": "2026-01-15 09:45:00",
+        "timeStampSec": "1736941500",
+        "location": {
+            "lat": "35.1500",
+            "lon": "-90.0500",
+            "city": "Memphis",
+            "state": "TN",
+            "country": "US",
+            "timeStamp": "2026-01-15 09:45:00"
+        },
+        "type": 1
+    },
+    "status": {
+        "name": "Departed Pickup",
+        "code": "DEPARTED_PICKUP",
+        "timeStamp": "2026-01-15 10:30:00",
+        "timeStampSec": "1736945400",
+        "location": {
+            "lat": "35.1510",
+            "lon": "-90.0510",
+            "city": "Memphis",
+            "state": "TN",
+            "country": "US",
+            "timeStamp": "2026-01-15 10:30:00"
+        },
+        "type": 2
+    },
+    "locations": [
+        {
+            "lat": "35.5000",
+            "lon": "-89.5000",
+            "city": "Brownsville",
+            "state": "TN",
+            "country": "US",
+            "timeStamp": "2026-01-15 11:00:00"
+        },
+        {
+            "lat": "35.9606",
+            "lon": "-89.4570",
+            "city": "Dyersburg",
+            "state": "TN",
+            "country": "US",
+            "timeStamp": "2026-01-15 11:30:00"
+        }
+    ]
+}
+
+###
+# Expected (VendorDispatch.Enabled=true, verbosity="Generous"):
+#   - HTTP 200 with StatusResponse, status=true
+#   - 7 NEW rows in VendorOutboundTransactions for VectorLoadId='999001':
+#       LocationReportedEvent x 5  (latestLocation + latestStatus.location +
+#                                    status.location + 2 from locations[])
+#       LoadStatusEvent       x 2  (latestStatus + status)
+#
+# Verify with query #4 in 99_VerifySQL.sql.

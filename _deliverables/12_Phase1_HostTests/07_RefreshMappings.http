@@ -1,0 +1,33 @@
+### Refresh status mapping cache from DB
+### Call this after editing rows in dbo.VendorStatusMapping so changes apply
+### without restarting OTR API.
+###
+### Does NOT refresh the ClientProfile cache (which holds verbosity/apiKey/etc.).
+### That cache has a 60-second TTL of its own.
+
+POST http://localhost:5129/api/admin/refresh-mappings
+Content-Type: application/json
+
+###
+# Expected response:
+# {
+#   "Success": true,
+#   "CachedRowCountAfterRefresh": 9,   (or however many active rows you have)
+#   "ServerTimeUtc": "2026-..."
+# }
+#
+# Test the override path:
+#   1. Hit 02_TrackLoad or 04_CancelLoadTracking — note the EventTypeName / status code in the audit row
+#   2. INSERT or UPDATE a row in VendorStatusMapping (e.g., change FourKites Delivered from D1 to J1):
+#      UPDATE VendorAPI_FK.dbo.VendorStatusMapping
+#      SET TargetCode = 'J1', Notes = 'Customer wants J1 (Pickup Completed) instead of D1'
+#      WHERE VendorName = 'FourKites' AND Direction = 'Outbound' AND SourceCode = 'Delivered';
+#   3. Hit THIS endpoint (refresh-mappings)
+#   4. Re-trigger an event that uses Delivered status (e.g., SendStatus with status.code = "DELIVERED")
+#   5. New audit row should show J1 as the mapped code instead of D1
+#
+# When done, revert:
+#   UPDATE VendorAPI_FK.dbo.VendorStatusMapping
+#   SET TargetCode = 'D1', Notes = 'EDI 214: Completed (some shippers prefer J1 - refine after first prod data)'
+#   WHERE VendorName = 'FourKites' AND Direction = 'Outbound' AND SourceCode = 'Delivered';
+#   And hit refresh-mappings again.

@@ -1,0 +1,26 @@
+### Dispatcher status — no auth required, safe to call anytime
+GET http://localhost:5129/api/admin/dispatcher-status
+Accept: application/json
+
+###
+# Expected response shape:
+# {
+#   "VendorDispatcherConfigured": true,
+#   "VendorStatusMappingStoreInitialized": true,
+#   "CachedMappingRowCount": 9,
+#   "DispatchEnabledSetting": "true",          (or "false", or "(not set; defaults to true)")
+#   "ConnectionStringConfigured": true,
+#   "ServerTimeUtc": "2025-...",
+#   "ReadinessHint": "READY: dispatcher will fire events to configured vendors.",
+#                   (or "INERT: ..." if Enabled=false)
+#                   (or "PARTIAL: ..." if mapping store failed to load)
+#                   (or "NOT READY: ..." if Configure() failed at startup)
+#   "Notes": "Diagnostic endpoint. Add authentication before exposing to non-internal networks."
+# }
+#
+# Pass criteria for Phase 1 testing:
+#   - VendorDispatcherConfigured = true
+#   - VendorStatusMappingStoreInitialized = true
+#   - CachedMappingRowCount = 9 (the FK outbound seed)
+#   - ConnectionStringConfigured = true
+#   - ReadinessHint = READY (or INERT if you've deliberately disabled dispatch)

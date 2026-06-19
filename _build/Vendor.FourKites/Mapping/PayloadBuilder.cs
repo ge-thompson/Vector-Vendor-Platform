@@ -84,14 +84,25 @@ namespace Vendor.FourKites.Mapping
                 ["eventTimestamp"] = ToIso(evt.OccurredUtc)
             };
 
+            if (!string.IsNullOrEmpty(evt.ExternalLoadId))
+                jo["externalLoadId"] = evt.ExternalLoadId;
+            if (!string.IsNullOrEmpty(evt.LoadType))
+                jo["loadType"] = evt.LoadType;
+            if (!string.IsNullOrEmpty(evt.TrailerType))
+                jo["trailerType"] = evt.TrailerType;
+            if (!string.IsNullOrEmpty(evt.LoadNotes))
+                jo["loadNotes"] = evt.LoadNotes;
+            if (evt.IsTeamLoad.HasValue)
+                jo["isTeamLoad"] = evt.IsTeamLoad.Value;
+
             if (evt.Carrier != null)
             {
                 jo["carrier"] = new JObject
                 {
-                    ["scac"]      = evt.Carrier.Scac,
-                    ["name"]      = evt.Carrier.Name,
-                    ["mcNumber"]  = evt.Carrier.McNumber,
-                    ["dotNumber"] = evt.Carrier.DotNumber
+                    ["scac"]         = evt.Carrier.Scac,
+                    ["name"]         = evt.Carrier.Name,
+                    ["mcNumber"]     = evt.Carrier.McNumber,
+                    ["dotNumber"]    = evt.Carrier.DotNumber
                 };
             }
 
@@ -99,9 +110,11 @@ namespace Vendor.FourKites.Mapping
             {
                 jo["driver"] = new JObject
                 {
-                    ["name"]  = evt.Driver.Name,
-                    ["phone"] = evt.Driver.Phone,
-                    ["email"] = evt.Driver.Email
+                    ["name"]       = evt.Driver.Name,
+                    ["phone"]      = evt.Driver.Phone,
+                    ["email"]      = evt.Driver.Email,
+                    ["driverType"] = evt.Driver.DriverType,
+                    ["comments"]   = evt.Driver.Comments
                 };
             }
 
@@ -111,10 +124,35 @@ namespace Vendor.FourKites.Mapping
                 {
                     ["truckNumber"]   = evt.Equipment.TruckNumber,
                     ["trailerNumber"] = evt.Equipment.TrailerNumber,
+                    ["trailerType"]   = evt.Equipment.TrailerType,
                     ["vin"]           = evt.Equipment.Vin,
                     ["licensePlate"]  = evt.Equipment.LicensePlate
                 };
             }
+
+            if (evt.Dispatcher != null)
+            {
+                jo["dispatcher"] = new JObject
+                {
+                    ["id"]    = evt.Dispatcher.Id,
+                    ["name"]  = evt.Dispatcher.Name,
+                    ["email"] = evt.Dispatcher.Email,
+                    ["phone"] = evt.Dispatcher.Phone
+                };
+            }
+
+            if (evt.Shipper != null)
+            {
+                jo["shipper"] = new JObject
+                {
+                    ["shipperId"]          = evt.Shipper.ShipperId,
+                    ["referenceNumber"]    = evt.Shipper.ReferenceNumber,
+                    ["notificationEmails"] = evt.Shipper.NotificationEmails
+                };
+            }
+
+            if (evt.Stops != null && evt.Stops.Count > 0)
+                jo["stops"] = new JArray(evt.Stops.Select(BuildStop));
 
             return new BuildResult { Json = jo.ToString(Formatting.None), RequestId = requestId };
         }
@@ -220,6 +258,10 @@ namespace Vendor.FourKites.Mapping
                 ["state"]             = stop.State,
                 ["postalCode"]        = stop.PostalCode,
                 ["country"]           = stop.Country,
+                ["latitude"]          = stop.Latitude,
+                ["longitude"]         = stop.Longitude,
+                ["notes"]             = stop.Notes,
+                ["externalStopId"]    = stop.ExternalStopId,
                 ["scheduledArrival"]  = stop.ScheduledArrivalUtc.HasValue ? ToIso(stop.ScheduledArrivalUtc.Value) : null,
                 ["scheduledDeparture"]= stop.ScheduledDepartureUtc.HasValue ? ToIso(stop.ScheduledDepartureUtc.Value) : null
             };
