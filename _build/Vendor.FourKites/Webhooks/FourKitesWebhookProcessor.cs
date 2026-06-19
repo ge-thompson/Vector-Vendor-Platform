@@ -93,30 +93,41 @@ namespace Vendor.FourKites.Webhooks
             {
                 var jo = JObject.Parse(rawPayload);
 
-                meta.MessageType  = jo["messageType"]?.ToString();
-                meta.VectorLoadId = jo["loadNumber"]?.ToString();
-                meta.VendorLoadId = jo["fourKitesLoadId"]?.ToString()
-                                    ?? jo["loadId"]?.ToString();
+                // FK uses MixedCase field names per docs (MessageType, LoadNumber,
+                // FourKitesLoadId, IsSuccess, Timestamp). Fall back to lowercase
+                // variants to remain tolerant of test fixtures or future changes.
+                meta.MessageType  = ReadFirst(jo, "MessageType", "messageType");
+                meta.VectorLoadId = ReadFirst(jo, "LoadNumber", "loadNumber");
+                meta.VendorLoadId = ReadFirst(jo, "FourKitesLoadId", "fourKitesLoadId", "loadId");
 
-                // FK signals app-level outcome via isSuccess. Default to true if absent.
-                var isSuccess = jo["isSuccess"];
+                // FK signals app-level outcome via IsSuccess. Default to true if absent.
+                var isSuccess = jo["IsSuccess"] ?? jo["isSuccess"];
                 if (isSuccess != null && isSuccess.Type == JTokenType.Boolean)
                     meta.IsSuccess = isSuccess.Value<bool>();
 
                 // If errors present, capture verbatim for forensics
-                var errors = jo["errors"];
+                var errors = jo["Errors"] ?? jo["errors"];
                 if (errors != null && errors.Type != JTokenType.Null)
                     meta.ErrorsJson = errors.ToString(Newtonsoft.Json.Formatting.None);
 
-                // Reference numbers — FK sometimes echoes BOL/PO for matching
-                var refs = jo["references"];
+                // Reference numbers — FK echoes for matching
+                var refs = jo["ReferenceNumbers"] ?? jo["references"];
                 if (refs != null && refs.Type == JTokenType.Array)
                 {
                     meta.ReferenceNumbers = new List<string>();
                     foreach (var r in (JArray)refs)
                     {
-                        var val = r["value"]?.ToString();
-                        if (!string.IsNullOrEmpty(val)) meta.ReferenceNumbers.Add(val);
+                        // FK's ReferenceNumbers is a plain string array, not an object array
+                        if (r.Type == JTokenType.String)
+                        {
+                            var val = r.ToString();
+                            if (!string.IsNullOrEmpty(val)) meta.ReferenceNumbers.Add(val);
+                        }
+                        else
+                        {
+                            var val = r["value"]?.ToString();
+                            if (!string.IsNullOrEmpty(val)) meta.ReferenceNumbers.Add(val);
+                        }
                     }
                 }
             }
@@ -127,6 +138,17 @@ namespace Vendor.FourKites.Webhooks
             }
 
             return meta;
+        }
+
+        /// <summary>Read the first non-null token from a list of field names.</summary>
+        private static string ReadFirst(JObject jo, params string[] names)
+        {
+            foreach (var n in names)
+            {
+                var v = jo[n]?.ToString();
+                if (!string.IsNullOrEmpty(v)) return v;
+            }
+            return null;
         }
 
         // ─── Phase 2a: find matching outbound transaction (background) ────

@@ -14,20 +14,21 @@ namespace Vendor.FourKites.Smoke
             {
                 var mock = new MockHttpMessageHandler();
                 mock.QueueResponse(HttpStatusCode.Accepted,
-                    @"{""requestId"":""req-xyz"",""fourKitesLoadId"":""FK-001""}");
+                    @"{""requestId"":""req-xyz"",""loadId"":420645495}");
 
                 using (var client = new FourKitesClient(mock, TimeSpan.FromSeconds(5)))
                 {
                     var response = await client.PostJsonAsync(
-                        "https://api.fourkites.com/v1/loads",
+                        "https://api-staging.fourkites.com/api/v1/tracking",
                         "test-key",
-                        @"{""loadNumber"":""LOAD1""}",
+                        @"{""load"":{""loadNumber"":""LOAD1""}}",
                         CancellationToken.None);
 
                     TestHarness.Assert(response.IsSuccess, "should be success");
                     TestHarness.AssertEqual(202, response.HttpStatusCode.Value, "status");
                     TestHarness.AssertEqual("req-xyz", response.VendorRequestId, "VendorRequestId extracted");
-                    TestHarness.AssertEqual("FK-001", response.VendorLoadId, "VendorLoadId extracted");
+                    TestHarness.AssertEqual("420645495", response.VendorLoadId,
+                        "VendorLoadId extracted from 'loadId' (FK actual field name)");
                 }
             }).GetAwaiter().GetResult();
 
@@ -39,7 +40,7 @@ namespace Vendor.FourKites.Smoke
                 using (var client = new FourKitesClient(mock, TimeSpan.FromSeconds(5)))
                 {
                     await client.PostJsonAsync(
-                        "https://api.fourkites.com/v1/loads",
+                        "https://api-staging.fourkites.com/api/v1/tracking",
                         "my-api-key-123",
                         @"{""foo"":""bar""}",
                         CancellationToken.None);
@@ -49,17 +50,46 @@ namespace Vendor.FourKites.Smoke
                 var req = mock.Requests[0];
 
                 TestHarness.AssertEqual(HttpMethod.Post, req.Method, "POST method");
-                TestHarness.AssertEqual("https://api.fourkites.com/v1/loads", req.RequestUri.ToString());
+                TestHarness.AssertEqual("https://api-staging.fourkites.com/api/v1/tracking", req.RequestUri.ToString());
 
-                TestHarness.Assert(req.Headers.Contains("X-FK-API-Key"), "X-FK-API-Key header present");
-                var apiKeyValues = req.Headers.GetValues("X-FK-API-Key");
+                // FK spec: header is lowercase 'apikey', raw key, no prefix
+                TestHarness.Assert(req.Headers.Contains("apikey"), "'apikey' header present (lowercase)");
+                var apiKeyValues = req.Headers.GetValues("apikey");
                 foreach (var v in apiKeyValues)
                 {
-                    TestHarness.AssertEqual("my-api-key-123", v, "X-FK-API-Key value");
+                    TestHarness.AssertEqual("my-api-key-123", v, "raw apikey value");
                     break;
                 }
 
+                // Pre-rewrite header is gone
+                TestHarness.Assert(!req.Headers.Contains("X-FK-API-Key"),
+                    "no X-FK-API-Key (the old pre-rewrite name)");
+
                 TestHarness.AssertEqual(@"{""foo"":""bar""}", mock.SentBodies[0], "body sent verbatim");
+            }).GetAwaiter().GetResult();
+
+            TestHarness.RunAsync("Client. PATCH method works (used for FK Load Update)", async () =>
+            {
+                var mock = new MockHttpMessageHandler();
+                mock.QueueResponse(HttpStatusCode.OK,
+                    @"{""message"":""Load updated successfully"",""requestId"":""upd-1"",""statusCode"":200}");
+
+                using (var client = new FourKitesClient(mock, TimeSpan.FromSeconds(5)))
+                {
+                    var response = await client.PatchJsonAsync(
+                        "https://api-staging.fourkites.com/api/v1/tracking/420645495",
+                        "test-key",
+                        @"{""simpleUpdate"":false,""load"":{}}",
+                        CancellationToken.None);
+
+                    TestHarness.Assert(response.IsSuccess, "PATCH success");
+                    TestHarness.AssertEqual("upd-1", response.VendorRequestId);
+                }
+
+                var req = mock.Requests[0];
+                TestHarness.AssertEqual("PATCH", req.Method.Method, "PATCH verb");
+                TestHarness.AssertContains(req.RequestUri.ToString(), "/420645495",
+                    "FK loadId in URL path");
             }).GetAwaiter().GetResult();
 
             TestHarness.RunAsync("Client. 4xx returns Permanent failure, no retry", async () =>

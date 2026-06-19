@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -7,21 +8,34 @@ namespace Vendor.FourKites
     /// <summary>
     /// Typed view of the ClientProfile.ConfigJson blob for the FourKites vendor.
     ///
+    /// Updated per the official FK API spec at docs.fourkites.com/api-reference:
+    ///   - Auth header is "apikey" (lowercase, raw, no prefix)
+    ///   - Multiple environments (staging / production / azure-staging / azure-production)
+    ///   - "billToCode" is no longer a top-level Load Create field per FK spec, but we
+    ///     retain it in config for potential future Location Update calls (carrier-side
+    ///     endpoint that does take a billToCode)
+    ///   - Endpoint paths use FK's actual URLs (/api/v1/tracking, /api/v1/tracking/{loadId},
+    ///     /api/v1/tracking/delete_loads, /document-data/upload)
+    ///
     /// EXAMPLE ConfigJson:
     /// <code>
     /// {
-    ///   "apiKey": "fk-key-abc123",
-    ///   "billToCode": "VECTOR",
-    ///   "baseUrl": "https://api.fourkites.com",
-    ///   "loadEndpoint": "/v1/loads",
+    ///   "apiKey":      "OFX6BL85E0SC9W9SDHIEWTTPRFH8U",
+    ///   "billToCode":  "2215324",
+    ///   "vectorScac":  "VCTR",
+    ///   "environment": "staging",
+    ///   "defaultHaulType": "brokered_load",
+    ///   "dispatchPolicy": {
+    ///     "verbosity": "Generous"
+    ///   },
     ///   "webhookAuth": {
-    ///     "scheme": "apikey",
-    ///     "headerName": "X-FK-Webhook-Key",
-    ///     "expectedValue": "fk-webhook-secret-xyz"
+    ///     "scheme":         "apikey",
+    ///     "headerName":     "X-FK-Webhook-Key",
+    ///     "expectedValue":  "fk-webhook-secret-xyz"
     ///   },
     ///   "rateLimit": {
-    ///     "requestsPerSecond": 10,
-    ///     "burstSize": 20
+    ///     "requestsPerSecond": 1,
+    ///     "burstSize":         5
     ///   }
     /// }
     /// </code>
@@ -34,28 +48,45 @@ namespace Vendor.FourKites
     {
         // ─── Required ────────────────────────────────────────────────────
 
-        /// <summary>The FK API key, sent as a request header.</summary>
+        /// <summary>The FK API key, sent as the "apikey" request header (lowercase, raw).</summary>
         public string ApiKey { get; set; }
 
-        /// <summary>Vector's billToCode in FK's system. Required on most FK payloads.</summary>
+        /// <summary>
+        /// Vector's billToCode in FK's system. Stored even though it's NOT a Load Create
+        /// field per the current FK spec — retained for potential future Location Update
+        /// calls (the carrier-facing endpoint where it IS required). Also a useful identifier
+        /// for ops/support.
+        /// </summary>
         public string BillToCode { get; set; }
-
-        /// <summary>Base URL for the FK API. Typically "https://api.fourkites.com".</summary>
-        public string BaseUrl { get; set; }
 
         // ─── Optional with defaults ─────────────────────────────────────
 
-        /// <summary>Endpoint path for load operations. Default "/v1/loads".</summary>
-        public string LoadEndpoint { get; set; } = "/v1/loads";
+        /// <summary>
+        /// Vector's SCAC or Service Provider ID — goes into load.carrier on every payload.
+        /// FK requires this; rejects loads without it.
+        /// Default "VCTR" (placeholder). See open question O-001.
+        /// </summary>
+        public string VectorScac { get; set; } = "VCTR";
 
-        /// <summary>Endpoint path for status updates. Default "/v1/loads/status".</summary>
-        public string StatusEndpoint { get; set; } = "/v1/loads/status";
+        /// <summary>
+        /// Which FK environment to target. Drives BaseUrl resolution.
+        /// Valid: "staging" | "production" | "azure-staging" | "azure-production".
+        /// Default "staging" — dev work should never accidentally hit production.
+        /// </summary>
+        public string Environment { get; set; } = "staging";
 
-        /// <summary>Endpoint path for location updates. Default "/v1/loads/location".</summary>
-        public string LocationEndpoint { get; set; } = "/v1/loads/location";
+        /// <summary>
+        /// Override the BaseUrl explicitly. If set, takes precedence over Environment.
+        /// Useful for pointing at a local mock for tests.
+        /// </summary>
+        public string BaseUrlOverride { get; set; }
 
-        /// <summary>Endpoint path for document uploads. Default "/v1/loads/documents".</summary>
-        public string DocumentEndpoint { get; set; } = "/v1/loads/documents";
+        /// <summary>
+        /// Default haulType for Vector's brokered loads. FK requires haulType as an array;
+        /// we send [DefaultHaulType]. Configurable in case FK confirms a different value.
+        /// See open question O-011.
+        /// </summary>
+        public string DefaultHaulType { get; set; } = "brokered_load";
 
         /// <summary>HTTP request timeout. Default 30 seconds.</summary>
         public int TimeoutSeconds { get; set; } = 30;
@@ -66,7 +97,53 @@ namespace Vendor.FourKites
 
         // ─── Rate limiting ──────────────────────────────────────────────
 
+        /// <summary>
+        /// FK documents a 1 req/sec limit on Create. Default to 1/sec with a small burst.
+        /// </summary>
         public RateLimitConfig RateLimit { get; set; }
+
+        // ─── Derived ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Resolves the FK base URL from BaseUrlOverride or Environment.
+        /// </summary>
+        [JsonIgnore]
+        public string BaseUrl
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(BaseUrlOverride))
+                    return BaseUrlOverride.TrimEnd('/');
+
+                var key = (Environment ?? "staging").Trim().ToLowerInvariant();
+                if (_environmentHosts.TryGetValue(key, out var host)) return host;
+
+                // Unknown environment — fail loud rather than silently using the wrong host
+                throw new FourKitesConfigException(
+                    $"Unknown FK environment '{Environment}'. " +
+                    "Valid values: " + string.Join(", ", _environmentHosts.Keys));
+            }
+        }
+
+        // Endpoint paths per FK docs/api-reference
+        [JsonIgnore] public string LoadCreateEndpoint   => "/api/v1/tracking";
+        public string LoadUpdateEndpoint(long fkLoadId) => "/api/v1/tracking/" + fkLoadId;
+        [JsonIgnore] public string LoadDeleteEndpoint   => "/api/v1/tracking/delete_loads";
+        [JsonIgnore] public string DocumentUploadEndpoint => "/document-data/upload";
+
+        // ─── Environment URL table ──────────────────────────────────────
+
+        // Per FK docs/api-reference Create Shipment Request panel.
+        // Azure-Staging URL not captured verbatim in the docs we have — falls back to
+        // a known FK pattern; verify before targeting that env.
+        private static readonly IReadOnlyDictionary<string, string> _environmentHosts =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["staging"]         = "https://api-staging.fourkites.com",
+                ["production"]      = "https://api.fourkites.com",
+                ["azure-production"] = "https://api.ng.fourkites.com",
+                ["azure-staging"]    = "https://api-staging.ng.fourkites.com"  // O-? not verbatim
+            };
 
         // ─── Parsing ────────────────────────────────────────────────────
 
@@ -83,8 +160,6 @@ namespace Vendor.FourKites
             FourKitesConfig cfg;
             try
             {
-                // Use a JObject intermediary so we can pick defaults for missing fields
-                // without Newtonsoft constructing them as null.
                 var jo = JObject.Parse(configJson);
                 cfg = jo.ToObject<FourKitesConfig>();
                 if (cfg == null)
@@ -101,15 +176,14 @@ namespace Vendor.FourKites
                 throw new FourKitesConfigException("ConfigJson missing required field 'apiKey'.");
             if (string.IsNullOrWhiteSpace(cfg.BillToCode))
                 throw new FourKitesConfigException("ConfigJson missing required field 'billToCode'.");
-            if (string.IsNullOrWhiteSpace(cfg.BaseUrl))
-                throw new FourKitesConfigException("ConfigJson missing required field 'baseUrl'.");
-
-            // Normalize: strip trailing slash from BaseUrl so we can concat with "/v1/..." cleanly
-            cfg.BaseUrl = cfg.BaseUrl.TrimEnd('/');
 
             // Fill defaults on optional nested objects
             if (cfg.RateLimit == null)
-                cfg.RateLimit = new RateLimitConfig { RequestsPerSecond = 10, BurstSize = 20 };
+                cfg.RateLimit = new RateLimitConfig { RequestsPerSecond = 1, BurstSize = 5 };
+
+            // Eagerly validate environment maps to a host so a bad value fails at config-parse
+            // time rather than at first dispatch
+            var _ = cfg.BaseUrl;
 
             return cfg;
         }
@@ -118,7 +192,7 @@ namespace Vendor.FourKites
     /// <summary>Webhook authentication settings — how FK proves its identity to us.</summary>
     public class WebhookAuthConfig
     {
-        /// <summary>Auth scheme: "apikey" (default), "basic", or "none". O-001 still open.</summary>
+        /// <summary>Auth scheme: "apikey" (default), "basic", or "none". O-003 still open.</summary>
         public string Scheme { get; set; } = "apikey";
 
         /// <summary>Header name FK sends the credential in. For apikey scheme.</summary>
@@ -132,16 +206,25 @@ namespace Vendor.FourKites
 
         /// <summary>Basic-auth password. Used only when Scheme = "basic".</summary>
         public string BasicPassword { get; set; }
+
+        /// <summary>
+        /// Optional IP allowlist for FK webhook origin. CIDR or plain IPs.
+        /// When non-empty, validator additionally checks request origin IP.
+        /// FK static IP range is O-004 — leave empty until confirmed.
+        /// </summary>
+        public List<string> AllowedSourceIps { get; set; }
     }
 
     /// <summary>Rate-limit settings — how aggressively we throttle ourselves.</summary>
     public class RateLimitConfig
     {
-        /// <summary>Steady-state requests per second. Default 10.</summary>
-        public int RequestsPerSecond { get; set; } = 10;
+        /// <summary>
+        /// Steady-state requests per second. Default 1 (per FK's documented limit on Create).
+        /// </summary>
+        public int RequestsPerSecond { get; set; } = 1;
 
-        /// <summary>Burst size (token bucket capacity). Default 20.</summary>
-        public int BurstSize { get; set; } = 20;
+        /// <summary>Burst size (token bucket capacity). Default 5.</summary>
+        public int BurstSize { get; set; } = 5;
     }
 
     /// <summary>Thrown when ConfigJson is missing or malformed.</summary>

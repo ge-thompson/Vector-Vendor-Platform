@@ -5,19 +5,28 @@ using Vendor.Common.Abstractions;
 using Vendor.Common.Configuration;
 using Vendor.Common.Events;
 using Vendor.FourKites.Mapping;
+using Vendor.FourKites.Persistence;
 using Vendor.FourKites.RateLimiting;
 
 namespace Vendor.FourKites
 {
     /// <summary>
     /// IVendorAdapter implementation for FourKites. Translates vendor-agnostic events
-    /// into FK API calls.
+    /// into FK API calls per the official spec at docs.fourkites.com/api-reference.
     ///
-    /// Lifecycle:
-    ///   1. Registry instantiates ONCE at app startup
-    ///   2. On each dispatch, framework calls CanHandle(evt) then DispatchAsync(evt, profile)
-    ///   3. Adapter parses profile.ConfigJson (cheap; per-dispatch), picks endpoint,
-    ///      builds payload, checks rate limiter, calls client, returns result
+    /// Event routing:
+    ///   LoadAssignedEvent         -> POST /api/v1/tracking         (first time)
+    ///                                PATCH /api/v1/tracking/{loadId} (subsequent)
+    ///                                Distinguishes via LoadCrossReference lookup
+    ///   LoadTrackingStoppedEvent  -> POST /api/v1/tracking/delete_loads
+    ///   DocumentAvailableEvent    -> POST /document-data/upload (base64 JSON)
+    ///
+    ///   LoadCreatedEvent          -> SKIPPED  (Phase 2 will originate Create from FBS;
+    ///                                          Phase 1 origin is LoadAssignedEvent above)
+    ///   LoadStatusEvent           -> SKIPPED  (O-006: FK does its own tracking once
+    ///                                          driverPhone is handed off; no FK endpoint
+    ///                                          for pushing TT-sourced status updates IN)
+    ///   LocationReportedEvent     -> SKIPPED  (same reason as LoadStatusEvent)
     ///
     /// THREE CONTRACT RULES (from IVendorAdapter docs) — verified in tests:
     ///   1. NEVER throw out of DispatchAsync — every code path returns a VendorOperationResult
@@ -28,48 +37,57 @@ namespace Vendor.FourKites
     {
         public string VendorName => "FourKites";
 
-        // Reused across all dispatches. Created in constructor; disposed on disposal.
         private readonly FourKitesClient _client;
         private readonly Action<Exception> _onError;
+        private readonly LoadCrossReferenceStore _crossRef;
 
-        // Rate limiter is created lazily per (apiKey, billToCode) combination so a
-        // multi-tenant FK deployment doesn't share buckets across tenants. For Phase 1
-        // there's just one tenant so this is effectively a single bucket.
+        // Rate limiter is per-(apiKey, billToCode) so multi-tenant deployments don't share buckets.
         private InMemoryRateLimiter _rateLimiter;
         private string _rateLimiterKey;
         private readonly object _rateLimiterLock = new object();
 
         /// <summary>
         /// Parameterless constructor — used by VendorAdapterRegistry's reflection.
-        /// Default 30-second HTTP timeout, no error handler.
+        /// Loads the audit DB connection string from VendorDispatch.AuditConnectionString
+        /// (set in Web.config). Without that key the cross-reference lookup will fail —
+        /// the registry's normal constructor below is preferred.
         /// </summary>
         public FourKitesAdapter()
-            : this(new FourKitesClient(TimeSpan.FromSeconds(30)), errorHandler: null)
+            : this(new FourKitesClient(TimeSpan.FromSeconds(30)),
+                   crossRef: BuildCrossRefFromAppSettings(),
+                   errorHandler: null)
         {
         }
 
         /// <summary>
         /// Registry-friendly constructor matching the (ClientProfileRepository, Action&lt;Exception&gt;)
-        /// shape. ClientProfileRepository is unused — the framework hands us the matching
-        /// profile on every dispatch. The error handler is wired into the client.
+        /// shape. Cross-reference store is built from VendorDispatch.AuditConnectionString.
         /// </summary>
         public FourKitesAdapter(ClientProfileRepository profileRepository, Action<Exception> errorHandler)
-            : this(new FourKitesClient(TimeSpan.FromSeconds(30), errorHandler), errorHandler)
+            : this(new FourKitesClient(TimeSpan.FromSeconds(30), errorHandler),
+                   crossRef: BuildCrossRefFromAppSettings(),
+                   errorHandler: errorHandler)
         {
         }
 
-        /// <summary>Test-friendly constructor — accepts a pre-built client.</summary>
-        public FourKitesAdapter(FourKitesClient client, Action<Exception> errorHandler = null)
+        /// <summary>Test-friendly constructor — accepts a pre-built client and store.</summary>
+        public FourKitesAdapter(
+            FourKitesClient client,
+            LoadCrossReferenceStore crossRef,
+            Action<Exception> errorHandler = null)
         {
-            _client = client ?? throw new ArgumentNullException(nameof(client));
-            _onError = errorHandler ?? (_ => { });
+            _client   = client   ?? throw new ArgumentNullException(nameof(client));
+            _crossRef = crossRef; // nullable — adapter will degrade to always-Create if absent
+            _onError  = errorHandler ?? (_ => { });
         }
 
         // ─── IVendorAdapter ───────────────────────────────────────────────
 
         /// <summary>
-        /// Returns true if FK accepts this event type. FK accepts all framework events
-        /// except GenericLoadEvent (FK doesn't know what to do with arbitrary data).
+        /// Returns true if FK accepts this event type. The adapter dispatches:
+        ///   LoadAssignedEvent, LoadTrackingStoppedEvent, DocumentAvailableEvent.
+        /// LoadCreatedEvent / LoadStatusEvent / LocationReportedEvent are accepted
+        /// at this layer but dispatched as Skipped (see DispatchAsync).
         /// </summary>
         public bool CanHandle(VendorEvent evt)
         {
@@ -85,7 +103,7 @@ namespace Vendor.FourKites
         public async Task<VendorOperationResult> DispatchAsync(
             VendorEvent evt,
             ClientProfile profile,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             // ─── 1. Defensive null checks ────────────────────────────────
             if (evt == null)
@@ -102,12 +120,23 @@ namespace Vendor.FourKites
             catch (FourKitesConfigException ex)
             {
                 _onError(ex);
-                // Bad config is operator error — permanent until config is fixed.
                 return VendorOperationResult.Failed(
                     "Bad ConfigJson for FourKites profile: " + ex.Message, "Permanent");
             }
 
-            // ─── 3. Rate limit check ─────────────────────────────────────
+            // ─── 3. Quick exits for events FK doesn't accept ─────────────
+            // See class-level routing comment for the rationale on each.
+
+            if (evt is LoadCreatedEvent)
+                return VendorOperationResult.Skipped(
+                    "FK Phase 1 originates Create via LoadAssignedEvent. LoadCreatedEvent is Phase 2 (FBS origin).");
+
+            if (evt is LoadStatusEvent || evt is LocationReportedEvent)
+                return VendorOperationResult.Skipped(
+                    "FK does its own truck tracking once driverPhone is handed off (O-006). " +
+                    "No FK endpoint exists for pushing TT-sourced status/location updates IN.");
+
+            // ─── 4. Rate limit check (only for events that actually hit FK) ─
             EnsureRateLimiter(cfg);
             if (!_rateLimiter.TryAcquire())
             {
@@ -115,48 +144,19 @@ namespace Vendor.FourKites
                     $"Local rate limiter blocked (limit {cfg.RateLimit.RequestsPerSecond}/sec, burst {cfg.RateLimit.BurstSize})");
             }
 
-            // ─── 4. Build payload + URL based on event type ──────────────
-            PayloadBuilder.BuildResult payload;
-            string endpoint;
-            string expectedCallbackType = null;
-
+            // ─── 5. Route + execute ─────────────────────────────────────
             try
             {
                 switch (evt)
                 {
-                    case LoadCreatedEvent loadCreated:
-                        payload = PayloadBuilder.BuildLoadCreated(loadCreated, cfg);
-                        endpoint = cfg.LoadEndpoint;
-                        expectedCallbackType = "LOAD_CREATION";  // FK echoes this on the webhook
-                        break;
-
                     case LoadAssignedEvent loadAssigned:
-                        payload = PayloadBuilder.BuildLoadAssigned(loadAssigned, cfg);
-                        endpoint = cfg.LoadEndpoint;
-                        break;
+                        return await DispatchLoadAssignedAsync(loadAssigned, cfg, cancellationToken).ConfigureAwait(false);
 
-                    case LocationReportedEvent locationReported:
-                        payload = PayloadBuilder.BuildLocationReported(locationReported, cfg);
-                        endpoint = cfg.LocationEndpoint;
-                        break;
-
-                    case LoadStatusEvent loadStatus:
-                        payload = PayloadBuilder.BuildLoadStatus(loadStatus, cfg);
-                        endpoint = cfg.StatusEndpoint;
-                        break;
-
-                    case LoadTrackingStoppedEvent trackingStopped:
-                        payload = PayloadBuilder.BuildTrackingStopped(trackingStopped, cfg);
-                        endpoint = cfg.StatusEndpoint;
-                        break;
+                    case LoadTrackingStoppedEvent stopped:
+                        return await DispatchLoadStoppedAsync(stopped, cfg, cancellationToken).ConfigureAwait(false);
 
                     case DocumentAvailableEvent docAvailable:
-                        // For now treat as a JSON metadata POST. A true multipart upload
-                        // of the file bytes would require a different client method —
-                        // deferring that to when the VB.NET POD path is wired up.
-                        payload = PayloadBuilder.BuildDocumentMetadata(docAvailable, cfg);
-                        endpoint = cfg.DocumentEndpoint;
-                        break;
+                        return await DispatchDocumentAsync(docAvailable, cfg, cancellationToken).ConfigureAwait(false);
 
                     default:
                         return VendorOperationResult.Skipped(
@@ -167,28 +167,131 @@ namespace Vendor.FourKites
             {
                 _onError(ex);
                 return VendorOperationResult.Failed(
-                    "Payload build failed: " + ex.Message, "Permanent",
-                    requestPayloadJson: null, responseBodyJson: null);
+                    "FK adapter unhandled error: " + ex.Message, "Permanent");
+            }
+        }
+
+        // ─── LoadAssignedEvent: Create-or-Update routing ──────────────────
+
+        private async Task<VendorOperationResult> DispatchLoadAssignedAsync(
+            LoadAssignedEvent evt, FourKitesConfig cfg, CancellationToken ct)
+        {
+            // Lookup existing FK loadId for this VectorLoadId.
+            long? existingFkLoadId = null;
+            if (_crossRef != null)
+            {
+                try
+                {
+                    existingFkLoadId = await _crossRef.GetFkLoadIdAsync(evt.VectorLoadId, ct).ConfigureAwait(false);
+                }
+                catch (Exception lookupEx)
+                {
+                    // Cross-ref lookup failure is non-fatal — fall back to Create.
+                    // Worst case: FK rejects with "load already exists" and we audit it.
+                    _onError(lookupEx);
+                }
             }
 
-            // ─── 5. POST the payload ─────────────────────────────────────
-            var fullUrl = cfg.BaseUrl + endpoint;
+            PayloadBuilder.BuildResult payload;
             FourKitesResponse response;
-            try
+
+            if (existingFkLoadId.HasValue)
             {
-                response = await _client.PostJsonAsync(
-                    fullUrl, cfg.ApiKey, payload.Json, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                // Client is contracted not to throw — defensive catch anyway
-                _onError(ex);
-                return VendorOperationResult.Failed(ex,
-                    "Transient");
+                // ─── Update path (PATCH) ───
+                payload = PayloadBuilder.BuildLoadUpdate(evt, cfg);
+                var fullUrl = cfg.BaseUrl + cfg.LoadUpdateEndpoint(existingFkLoadId.Value);
+                response = await _client.PatchJsonAsync(fullUrl, cfg.ApiKey, payload.Json, ct).ConfigureAwait(false);
+
+                return TranslateResponse(response, payload, expectedCallbackType: "LOAD_UPDATION");
             }
 
-            // ─── 6. Translate FourKitesResponse → VendorOperationResult ──
+            // ─── Create path (POST) ───
+            payload = PayloadBuilder.BuildLoadCreate(evt, cfg);
+            var createUrl = cfg.BaseUrl + cfg.LoadCreateEndpoint;
+            response = await _client.PostJsonAsync(createUrl, cfg.ApiKey, payload.Json, ct).ConfigureAwait(false);
+
+            // On 2xx, capture FK loadId for future Update/Delete lookups.
+            if (response.IsSuccess && _crossRef != null)
+            {
+                if (long.TryParse(response.VendorLoadId, out var newFkLoadId) && newFkLoadId > 0)
+                {
+                    try
+                    {
+                        await _crossRef.PersistAsync(evt.VectorLoadId, newFkLoadId, "ACTIVE", ct).ConfigureAwait(false);
+                    }
+                    catch (Exception persistEx)
+                    {
+                        // Persist failure is non-fatal but bad — future Updates will re-Create
+                        // and produce duplicates in FK. Log loudly.
+                        _onError(persistEx);
+                    }
+                }
+            }
+
+            return TranslateResponse(response, payload, expectedCallbackType: "LOAD_CREATION");
+        }
+
+        // ─── LoadTrackingStoppedEvent: Delete ────────────────────────────
+
+        private async Task<VendorOperationResult> DispatchLoadStoppedAsync(
+            LoadTrackingStoppedEvent evt, FourKitesConfig cfg, CancellationToken ct)
+        {
+            // Need FK loadId to call delete. Lookup cross-ref.
+            long? fkLoadId = null;
+            if (_crossRef != null)
+            {
+                try
+                {
+                    fkLoadId = await _crossRef.GetFkLoadIdAsync(evt.VectorLoadId, ct).ConfigureAwait(false);
+                }
+                catch (Exception lookupEx)
+                {
+                    _onError(lookupEx);
+                }
+            }
+
+            if (!fkLoadId.HasValue)
+            {
+                // No FK loadId on record. This usually means LoadAssignedEvent never succeeded
+                // (HTTP_FAIL on Create, never got an FK loadId), or the load was never tracked
+                // by FK in the first place. Either way, nothing to delete.
+                return VendorOperationResult.Skipped(
+                    "No FK loadId in cross-reference for VectorLoadId " + evt.VectorLoadId +
+                    " — nothing to delete. Reason: " + (evt.Reason ?? "unknown"));
+            }
+
+            var payload = PayloadBuilder.BuildLoadDelete(fkLoadId.Value);
+            var fullUrl = cfg.BaseUrl + cfg.LoadDeleteEndpoint;
+            var response = await _client.PostJsonAsync(fullUrl, cfg.ApiKey, payload.Json, ct).ConfigureAwait(false);
+
+            // On 2xx, mark cross-ref STOPPED so future Updates know not to PATCH a dead load.
+            if (response.IsSuccess && _crossRef != null)
+            {
+                try { await _crossRef.MarkStoppedAsync(evt.VectorLoadId, ct).ConfigureAwait(false); }
+                catch (Exception ex) { _onError(ex); }
+            }
+
+            return TranslateResponse(response, payload);
+        }
+
+        // ─── DocumentAvailableEvent: Upload ──────────────────────────────
+
+        private async Task<VendorOperationResult> DispatchDocumentAsync(
+            DocumentAvailableEvent evt, FourKitesConfig cfg, CancellationToken ct)
+        {
+            var payload = PayloadBuilder.BuildDocumentUpload(evt, cfg);
+            var fullUrl = cfg.BaseUrl + cfg.DocumentUploadEndpoint;
+            var response = await _client.PostJsonAsync(fullUrl, cfg.ApiKey, payload.Json, ct).ConfigureAwait(false);
+            return TranslateResponse(response, payload);
+        }
+
+        // ─── Translation helpers ──────────────────────────────────────────
+
+        private static VendorOperationResult TranslateResponse(
+            FourKitesResponse response,
+            PayloadBuilder.BuildResult payload,
+            string expectedCallbackType = null)
+        {
             if (response.IsSuccess)
             {
                 return VendorOperationResult.Succeeded(
@@ -212,12 +315,6 @@ namespace Vendor.FourKites
 
         // ─── Rate limiter lazy init ───────────────────────────────────────
 
-        /// <summary>
-        /// Creates or reuses the rate limiter for the current config's
-        /// (apiKey, billToCode) tuple. Lazy because we don't know the config
-        /// until the first dispatch, and changing rate-limit settings in
-        /// ConfigJson should take effect on the next dispatch.
-        /// </summary>
         private void EnsureRateLimiter(FourKitesConfig cfg)
         {
             var key = cfg.ApiKey + "|" + cfg.BillToCode + "|"
@@ -233,6 +330,27 @@ namespace Vendor.FourKites
                     burstSize: cfg.RateLimit.BurstSize,
                     requestsPerSecond: cfg.RateLimit.RequestsPerSecond);
                 _rateLimiterKey = key;
+            }
+        }
+
+        // ─── Cross-ref construction ───────────────────────────────────────
+
+        /// <summary>
+        /// Build a LoadCrossReferenceStore from the framework's audit connection string
+        /// (set as VendorDispatch.AuditConnectionString in Web.config). Returns null if
+        /// not configured — adapter degrades to always-Create with a soft warning.
+        /// </summary>
+        private static LoadCrossReferenceStore BuildCrossRefFromAppSettings()
+        {
+            try
+            {
+                var cs = System.Configuration.ConfigurationManager.AppSettings["VendorDispatch.AuditConnectionString"];
+                if (string.IsNullOrWhiteSpace(cs)) return null;
+                return new LoadCrossReferenceStore(cs);
+            }
+            catch
+            {
+                return null;
             }
         }
 

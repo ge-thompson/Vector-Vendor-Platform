@@ -16,10 +16,17 @@ namespace Vendor.FourKites
     /// <summary>
     /// HTTP client wrapping calls to the FourKites REST API.
     ///
+    /// Auth: FK's "apikey" header (lowercase, raw key, no prefix).
+    ///       Per docs.fourkites.com/api-reference; NOT X-Api-Key or Authorization.
+    ///
+    /// Methods supported:
+    ///   POST   — Load Create, Load Delete (batch), Document Upload
+    ///   PATCH  — Load Update (FK loadId in URL path)
+    ///
     /// Responsibilities:
     /// - Compose URL from FourKitesConfig.BaseUrl + endpoint path
-    /// - Attach the FK API key as an Authorization-style header
-    /// - POST JSON bodies
+    /// - Attach the FK API key as the "apikey" header
+    /// - POST/PATCH JSON bodies
     /// - Apply Polly retry on TRANSIENT failures only (5xx, timeouts, network errors)
     ///   Do NOT retry 4xx — those are permanent and retrying would just spam FK
     /// - Return a typed FourKitesResponse that the adapter consumes
@@ -37,6 +44,10 @@ namespace Vendor.FourKites
         private readonly Action<Exception> _onError;
         private bool _disposed;
 
+        // FK's required auth header (per docs.fourkites.com/api-reference).
+        // Lowercase. Raw key. No "Bearer", no "X-", no prefix of any kind.
+        private const string FK_AUTH_HEADER = "apikey";
+
         /// <summary>
         /// Production constructor — creates its own HttpClient.
         /// </summary>
@@ -47,7 +58,7 @@ namespace Vendor.FourKites
 
         /// <summary>
         /// Test-friendly constructor — caller hands us a HttpMessageHandler so tests
-        /// can inject a fake. Pattern: <c>new FourKitesClient(new MyFakeHandler(), TimeSpan.FromSeconds(30))</c>.
+        /// can inject a fake.
         /// </summary>
         public FourKitesClient(HttpMessageHandler handler, TimeSpan timeout,
             Action<Exception> errorHandler = null, bool ownsHandler = true)
@@ -63,16 +74,24 @@ namespace Vendor.FourKites
         /// <summary>
         /// POST a JSON payload to the given endpoint path. Returns a typed response
         /// covering all outcomes (success, transient failure, permanent failure).
-        ///
-        /// Headers added automatically:
-        ///   - X-FK-API-Key: {apiKey}     (FK authentication)
-        ///   - Content-Type: application/json
-        ///   - Accept: application/json
-        ///
-        /// NEVER THROWS — every failure mode lands as a FourKitesResponse with
-        /// IsSuccess=false and the right Error category.
+        /// NEVER THROWS.
         /// </summary>
-        public async Task<FourKitesResponse> PostJsonAsync(
+        public Task<FourKitesResponse> PostJsonAsync(
+            string fullUrl, string apiKey, string jsonBody, CancellationToken cancellationToken)
+            => SendJsonAsync(HttpMethod.Post, fullUrl, apiKey, jsonBody, cancellationToken);
+
+        /// <summary>
+        /// PATCH a JSON payload to the given endpoint path. Used for FK Load Update,
+        /// which takes the FK-issued loadId in the URL path. NEVER THROWS.
+        /// </summary>
+        public Task<FourKitesResponse> PatchJsonAsync(
+            string fullUrl, string apiKey, string jsonBody, CancellationToken cancellationToken)
+            => SendJsonAsync(new HttpMethod("PATCH"), fullUrl, apiKey, jsonBody, cancellationToken);
+
+        // ─── Core send logic shared by POST + PATCH ─────────────────────
+
+        private async Task<FourKitesResponse> SendJsonAsync(
+            HttpMethod method,
             string fullUrl,
             string apiKey,
             string jsonBody,
@@ -87,15 +106,13 @@ namespace Vendor.FourKites
                 var policyResult = await _retryPolicy.ExecuteAndCaptureAsync(
                     async (ct) =>
                     {
-                        using (var request = new HttpRequestMessage(HttpMethod.Post, fullUrl))
+                        using (var request = new HttpRequestMessage(method, fullUrl))
                         {
-                            request.Headers.Add("X-FK-API-Key", apiKey);
+                            // FK's auth header — lowercase "apikey", raw key, no prefix.
+                            request.Headers.Add(FK_AUTH_HEADER, apiKey);
                             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                             request.Content = new StringContent(jsonBody ?? "", Encoding.UTF8, "application/json");
 
-                            // Note: HttpClient.SendAsync throws on transport failures (network errors,
-                            // DNS failures, timeouts). Polly's retry catches those and retries.
-                            // It does NOT throw on 4xx/5xx — those come back as a response we inspect.
                             return await _http.SendAsync(request, ct).ConfigureAwait(false);
                         }
                     },
@@ -103,13 +120,9 @@ namespace Vendor.FourKites
 
                 sw.Stop();
 
-                // Polly's ExecuteAndCapture wraps the outcome — if all retries failed
-                // with an exception, FinalException is set.
                 if (policyResult.Outcome == OutcomeType.Failure)
                 {
                     var ex = policyResult.FinalException;
-                    // Defensive: Polly may report Failure with a null FinalException in some
-                    // cancellation edge cases. Treat as a generic transient failure.
                     if (ex == null)
                     {
                         return FourKitesResponse.OfFailure(
@@ -119,21 +132,15 @@ namespace Vendor.FourKites
 
                     _onError(ex);
 
-                    // Cancellation is not a transport error
                     if (ex is OperationCanceledException)
                         return FourKitesResponse.OfFailure("Cancelled before completion", "Transient", duration: sw.Elapsed);
 
                     return FourKitesResponse.OfFailure(ex.Message, "Transient", duration: sw.Elapsed);
                 }
 
-                // Got an HTTP response — could still be 4xx or 5xx
-                // Polly puts the response in Result for unhandled outcomes (success or 4xx),
-                // or in FinalHandledResult when the predicate matched but retries exhausted (e.g.,
-                // all attempts returned 5xx). Either way, we want the underlying HttpResponseMessage.
                 var httpResponse = policyResult.Result ?? policyResult.FinalHandledResult;
                 if (httpResponse == null)
                 {
-                    // Defensive: should never happen if Outcome != Failure, but guard anyway
                     return FourKitesResponse.OfFailure(
                         "Polly returned null result with no exception (unexpected)",
                         "Unknown", duration: sw.Elapsed);
@@ -144,8 +151,6 @@ namespace Vendor.FourKites
                     string body = "";
                     try
                     {
-                        // Defensive: HttpResponseMessage.Content can be null for some responses
-                        // (e.g., 204 No Content, or responses constructed without Content set)
                         if (httpResponse.Content != null)
                             body = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
                     }
@@ -155,17 +160,19 @@ namespace Vendor.FourKites
 
                     if (httpResponse.IsSuccessStatusCode)
                     {
-                        // Try to extract FK's requestId from the body for audit. FK convention:
-                        // their response echoes our requestId, sometimes also assigning a vendor-side id.
+                        // FK Load Create response shape (per docs):
+                        //   { "loadId": 1000, "message": "Load created successfully", "statusCode": 200 }
+                        // FK Load Update response shape:
+                        //   { "message": "Load updated successfully", "requestId": "...", "statusCode": 200 }
+                        // FK Load Delete response shape:
+                        //   { "message": "Tracking records submitted for deletion", "statusCode": "200", ... }
                         string vendorRequestId = TryExtractField(body, "requestId");
-                        string vendorLoadId = TryExtractField(body, "fourKitesLoadId")
-                                              ?? TryExtractField(body, "loadId");
+                        string vendorLoadId = TryExtractField(body, "loadId");
 
                         return FourKitesResponse.OfSuccess(
                             statusCode, body, vendorRequestId, vendorLoadId, sw.Elapsed);
                     }
 
-                    // Failed HTTP response
                     var category = ClassifyStatusCode(statusCode);
                     return FourKitesResponse.OfFailure(
                         $"FK returned HTTP {statusCode}: {Truncate(body, 500)}",
@@ -182,8 +189,6 @@ namespace Vendor.FourKites
             }
             catch (Exception ex)
             {
-                // Defensive — Polly should catch HttpRequestException etc., but if anything
-                // else escapes, we still return a Result rather than throw.
                 sw.Stop();
                 _onError(ex);
                 return FourKitesResponse.OfFailure(ex.Message, "Transient", duration: sw.Elapsed);
@@ -221,7 +226,6 @@ namespace Vendor.FourKites
             };
         }
 
-        /// <summary>Classifies an HTTP status as Transient (retryable) or Permanent.</summary>
         private static string ClassifyStatusCode(int statusCode)
         {
             if (statusCode == 429) return "RateLimit";
@@ -230,7 +234,6 @@ namespace Vendor.FourKites
             return "Unknown";
         }
 
-        /// <summary>Best-effort extraction of one top-level field from a JSON body.</summary>
         private static string TryExtractField(string body, string fieldName)
         {
             if (string.IsNullOrWhiteSpace(body)) return null;
@@ -255,7 +258,7 @@ namespace Vendor.FourKites
     }
 
     /// <summary>
-    /// Typed result of a FourKites HTTP call. Returned from <see cref="FourKitesClient.PostJsonAsync"/>.
+    /// Typed result of a FourKites HTTP call. Returned from <see cref="FourKitesClient"/> methods.
     /// The adapter translates this into a Vendor.Common.VendorOperationResult.
     /// </summary>
     public class FourKitesResponse
@@ -283,7 +286,7 @@ namespace Vendor.FourKites
 
         public static FourKitesResponse OfFailure(
             string message, string category,
-            int? httpStatusCode = null, string responseBody = null, TimeSpan duration = default)
+            int? httpStatusCode = null, string responseBody = null, TimeSpan duration = default(TimeSpan))
             => new FourKitesResponse
             {
                 IsSuccess = false,
