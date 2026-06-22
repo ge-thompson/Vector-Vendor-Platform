@@ -133,18 +133,18 @@ namespace Vendor.FourKites.Smoke
                     "no offset");
             });
 
-            TestHarness.Run("Payload. BuildLoadCreate stop lat/lon emitted as decimals (not strings)", () =>
+            TestHarness.Run("Payload. BuildLoadCreate stop lat/lon emitted as strings (FK spec)", () =>
             {
                 var cfg = NewCfg();
                 var evt = NewLoadAssignedEvent();
-                evt.Stops[0].Latitude = "35.1495";
-                evt.Stops[0].Longitude = "-90.0490";
+                evt.Stops[0].Latitude = "35.149500";
+                evt.Stops[0].Longitude = "-90.049000";
 
                 var result = PayloadBuilder.BuildLoadCreate(evt, cfg);
 
-                var stop = JObject.Parse(result.Json)["load"]?["stops"]?[0];
-                TestHarness.AssertEqual(JTokenType.Float, stop["latitude"]?.Type);
-                TestHarness.AssertEqual(JTokenType.Float, stop["longitude"]?.Type);
+                // FK explicitly requires Decimal Degrees format as a STRING, not a number
+                TestHarness.AssertContains(result.Json, "\"latitude\":\"35.149500\"", "lat as string");
+                TestHarness.AssertContains(result.Json, "\"longitude\":\"-90.049000\"", "lon as string");
             });
 
             TestHarness.Run("Payload. BuildLoadCreate omits billToCode and shipper at top level", () =>
@@ -159,6 +159,184 @@ namespace Vendor.FourKites.Smoke
                 TestHarness.AssertNull(body["shipper"], "shipper derived from API key, not in body");
                 TestHarness.AssertNull(body["load"]?["billToCode"], "billToCode also not inside load");
                 TestHarness.AssertNull(body["load"]?["shipper"], "shipper not inside load");
+            });
+
+            // ─── PayloadBuilder.BuildDispatcherLocation ──────────────
+
+            TestHarness.Run("Payload. BuildDispatcherLocation produces updates envelope with locationUpdate", () =>
+            {
+                var cfg = NewCfg();
+                var evt = new LocationReportedEvent
+                {
+                    VectorLoadId = "999001", SourceSystem = "Test",
+                    Latitude = "35.149500", Longitude = "-90.049000",
+                    City = "Memphis", State = "TN",
+                    LocatedAtUtc = new DateTime(2026, 6, 19, 22, 15, 5, DateTimeKind.Utc)
+                };
+
+                var result = PayloadBuilder.BuildDispatcherLocation(evt, cfg);
+                var body = JObject.Parse(result.Json);
+
+                TestHarness.AssertNotNull(body["updates"], "updates array present");
+                TestHarness.AssertEqual(1, ((JArray)body["updates"]).Count);
+
+                var update = body["updates"][0];
+                TestHarness.AssertEqual("2215324", update["billToCode"]?.ToString(), "billToCode from config");
+                TestHarness.AssertEqual("999001", update["identifierKeys"]?[0]?["identifier"]?.ToString());
+                TestHarness.AssertEqual("loadNumber", update["identifierKeys"]?[0]?["identifierType"]?.ToString());
+
+                var loc = update["loadUpdate"]?[0]?["locationUpdate"];
+                TestHarness.AssertNotNull(loc, "locationUpdate present");
+                TestHarness.AssertContains(result.Json, "\"latitude\":\"35.149500\"", "lat string");
+                TestHarness.AssertContains(result.Json, "\"longitude\":\"-90.049000\"", "lon string");
+                TestHarness.AssertContains(result.Json, "2026-06-19T22:15:05Z", "ISO 8601 with Z");
+                TestHarness.AssertEqual("Memphis", loc["city"]?.ToString());
+                TestHarness.AssertEqual("TN", loc["state"]?.ToString());
+            });
+
+            TestHarness.Run("Payload. BuildDispatcherLocation does not include eventUpdate", () =>
+            {
+                var cfg = NewCfg();
+                var evt = new LocationReportedEvent
+                {
+                    VectorLoadId = "L", SourceSystem = "T",
+                    Latitude = "1", Longitude = "2", LocatedAtUtc = DateTime.UtcNow
+                };
+                var result = PayloadBuilder.BuildDispatcherLocation(evt, cfg);
+                TestHarness.Assert(!result.Json.Contains("eventUpdate"),
+                    "location-only payload should not have eventUpdate");
+            });
+
+            // ─── PayloadBuilder.BuildDispatcherStatus ────────────────
+
+            TestHarness.Run("Payload. BuildDispatcherStatus maps status type to EDI 214 code", () =>
+            {
+                var cfg = NewCfg();
+                var evt = new LoadStatusEvent
+                {
+                    VectorLoadId = "999001", SourceSystem = "Test",
+                    StatusType = LoadStatusType.ArrivedAtPickup,
+                    StatusTimeUtc = new DateTime(2026, 6, 19, 22, 30, 0, DateTimeKind.Utc)
+                };
+                var result = PayloadBuilder.BuildDispatcherStatus(evt, cfg);
+
+                TestHarness.AssertContains(result.Json, "\"statusCode\":\"X1\"", "X1 for ArrivedAtPickup");
+                TestHarness.AssertContains(result.Json, "2026-06-19T22:30:00Z", "event timestamp with Z");
+                TestHarness.AssertContains(result.Json, "eventUpdate", "eventUpdate sub-object");
+                TestHarness.Assert(!result.Json.Contains("locationUpdate"),
+                    "status-only payload should not have locationUpdate");
+            });
+
+            TestHarness.Run("Payload. BuildDispatcherStatus sets delivered=true only for Delivered status", () =>
+            {
+                var cfg = NewCfg();
+
+                var delivered = PayloadBuilder.BuildDispatcherStatus(new LoadStatusEvent
+                {
+                    VectorLoadId = "L", SourceSystem = "T",
+                    StatusType = LoadStatusType.Delivered,
+                    StatusTimeUtc = DateTime.UtcNow
+                }, cfg);
+                TestHarness.AssertContains(delivered.Json, "\"delivered\":true", "delivered flag set");
+
+                var arrived = PayloadBuilder.BuildDispatcherStatus(new LoadStatusEvent
+                {
+                    VectorLoadId = "L", SourceSystem = "T",
+                    StatusType = LoadStatusType.ArrivedAtDelivery,
+                    StatusTimeUtc = DateTime.UtcNow
+                }, cfg);
+                TestHarness.Assert(!arrived.Json.Contains("\"delivered\""),
+                    "delivered flag NOT set for non-Delivered status");
+            });
+
+            TestHarness.Run("Payload. BuildDispatcherStatus passes through source description and code", () =>
+            {
+                var cfg = NewCfg();
+                var evt = new LoadStatusEvent
+                {
+                    VectorLoadId = "L", SourceSystem = "T",
+                    StatusType = LoadStatusType.DepartedPickup,
+                    SourceStatusCode = "DEPARTED_PICKUP",
+                    SourceStatusDescription = "Driver departed shipper",
+                    StatusTimeUtc = DateTime.UtcNow
+                };
+                var result = PayloadBuilder.BuildDispatcherStatus(evt, cfg);
+                TestHarness.AssertContains(result.Json, "\"statusDescription\":\"Driver departed shipper\"",
+                    "statusDescription passed through");
+                TestHarness.AssertContains(result.Json, "\"statusReasonCode\":\"DEPARTED_PICKUP\"",
+                    "statusReasonCode from source code");
+            });
+
+            // ─── PayloadBuilder.BuildLoadCreateFromCreated ──────────────
+
+            TestHarness.Run("Payload. BuildLoadCreateFromCreated produces FK Create shape from FBS event", () =>
+            {
+                var cfg = NewCfg();
+                var evt = new LoadCreatedEvent
+                {
+                    VectorLoadId = "999001", SourceSystem = "FBS", Mode = "TL",
+                    Origin = new StopInfo
+                    {
+                        SequenceNumber = 1, Role = StopRole.Pickup,
+                        Name = "Memphis Warehouse", AddressLine1 = "123 Main",
+                        City = "Memphis", State = "TN"
+                    },
+                    Destination = new StopInfo
+                    {
+                        SequenceNumber = 2, Role = StopRole.Delivery,
+                        Name = "Nashville DC", AddressLine1 = "456 Broadway",
+                        City = "Nashville", State = "TN"
+                    },
+                    References = new List<ReferenceNumber>
+                    {
+                        new ReferenceNumber { Type = "PO", Value = "PO-12345" },
+                        new ReferenceNumber { Type = "BOL", Value = "BOL-67890" }
+                    }
+                };
+
+                var result = PayloadBuilder.BuildLoadCreateFromCreated(evt, cfg);
+                var body = JObject.Parse(result.Json);
+
+                var load = body["load"];
+                TestHarness.AssertEqual("999001", load["loadNumber"]?.ToString());
+                TestHarness.AssertEqual("VCTR", load["carrier"]?.ToString(), "carrier as SCAC string");
+                TestHarness.AssertEqual("brokered_load", load["haulType"]?[0]?.ToString());
+
+                // No driver / equipment yet (FBS doesn't know yet)
+                TestHarness.AssertNull(load["trackingInfo"], "no trackingInfo at FBS-create time");
+
+                // Origin + Destination become stops
+                var stops = load["stops"] as JArray;
+                TestHarness.AssertNotNull(stops, "stops array present");
+                TestHarness.AssertEqual(2, stops.Count);
+                TestHarness.AssertEqual("pickup", stops[0]["stopType"]?.ToString());
+                TestHarness.AssertEqual("delivery", stops[1]["stopType"]?.ToString());
+
+                // References flattened from event
+                var refs = load["referenceNumbers"] as JArray;
+                TestHarness.AssertNotNull(refs, "referenceNumbers present");
+                TestHarness.AssertEqual(2, refs.Count);
+            });
+
+            TestHarness.Run("Payload. BuildLoadCreateFromCreated handles Stops[] preferred over Origin/Destination", () =>
+            {
+                var cfg = NewCfg();
+                var evt = new LoadCreatedEvent
+                {
+                    VectorLoadId = "L", SourceSystem = "FBS",
+                    Stops = new List<StopInfo>
+                    {
+                        new StopInfo { SequenceNumber = 1, Role = StopRole.Pickup,
+                                       Name = "S1", AddressLine1 = "a", City = "c", State = "s" },
+                        new StopInfo { SequenceNumber = 2, Role = StopRole.Intermediate,
+                                       Name = "S2", AddressLine1 = "a", City = "c", State = "s" },
+                        new StopInfo { SequenceNumber = 3, Role = StopRole.Delivery,
+                                       Name = "S3", AddressLine1 = "a", City = "c", State = "s" }
+                    }
+                };
+                var result = PayloadBuilder.BuildLoadCreateFromCreated(evt, cfg);
+                var stops = JObject.Parse(result.Json)["load"]?["stops"] as JArray;
+                TestHarness.AssertEqual(3, stops.Count, "three stops, not just two from Origin/Destination");
             });
 
             // ─── PayloadBuilder.BuildLoadUpdate ────────────────────────────
@@ -260,8 +438,23 @@ namespace Vendor.FourKites.Smoke
                 var ids = new List<string>
                 {
                     PayloadBuilder.BuildLoadCreate(evt, cfg).RequestId,
+                    PayloadBuilder.BuildLoadCreateFromCreated(new LoadCreatedEvent
+                    {
+                        VectorLoadId = "L", SourceSystem = "FBS"
+                    }, cfg).RequestId,
                     PayloadBuilder.BuildLoadUpdate(evt, cfg).RequestId,
                     PayloadBuilder.BuildLoadDelete(1).RequestId,
+                    PayloadBuilder.BuildDispatcherLocation(new LocationReportedEvent
+                    {
+                        VectorLoadId = "L", SourceSystem = "T",
+                        Latitude = "1", Longitude = "2", LocatedAtUtc = DateTime.UtcNow
+                    }, cfg).RequestId,
+                    PayloadBuilder.BuildDispatcherStatus(new LoadStatusEvent
+                    {
+                        VectorLoadId = "L", SourceSystem = "T",
+                        StatusType = LoadStatusType.Delivered,
+                        StatusTimeUtc = DateTime.UtcNow
+                    }, cfg).RequestId,
                     PayloadBuilder.BuildDocumentUpload(new DocumentAvailableEvent
                     {
                         VectorLoadId = "L", SourceSystem = "T",

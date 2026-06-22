@@ -9,16 +9,17 @@ using Vendor.Common.Events;
 namespace Vendor.FourKites.Smoke
 {
     /// <summary>
-    /// Smoke tests for FourKitesAdapter after the FK spec rewrite.
+    /// Smoke tests for FourKitesAdapter after the FK spec rewrite (rev 2 — carrier-side
+    /// Dispatcher Update endpoint now wired).
     ///
-    /// New routing rules (per docs.fourkites.com/api-reference):
+    /// Routing rules:
+    ///   LoadCreatedEvent          -> POST /api/v1/tracking (Create, from FBS)
     ///   LoadAssignedEvent         -> POST /api/v1/tracking (Create) when no cross-ref
     ///                                PATCH /api/v1/tracking/{loadId} (Update) when cross-ref exists
+    ///   LocationReportedEvent     -> POST /load/update/dispatcher-api/async (locationUpdate)
+    ///   LoadStatusEvent           -> POST /load/update/dispatcher-api/async (eventUpdate)
     ///   LoadTrackingStoppedEvent  -> POST /api/v1/tracking/delete_loads (or Skipped if no cross-ref)
     ///   DocumentAvailableEvent    -> POST /document-data/upload
-    ///   LoadStatusEvent           -> SKIPPED (FK does its own tracking)
-    ///   LocationReportedEvent     -> SKIPPED (FK does its own tracking)
-    ///   LoadCreatedEvent          -> SKIPPED (Phase 2 / FBS origin path)
     ///
     /// Tests pass null for LoadCrossReferenceStore so the adapter degrades to Create-only
     /// behavior. The Update and Delete-with-cross-ref paths are exercised in the integration
@@ -135,63 +136,132 @@ namespace Vendor.FourKites.Smoke
 
             // ─── Skipped event types ──────────────────────────────────────
 
-            TestHarness.RunAsync("Adapter. LoadStatusEvent returns Skipped (FK does own tracking)", async () =>
+            TestHarness.RunAsync("Adapter. LocationReportedEvent hits POST /load/update/dispatcher-api/async", async () =>
             {
                 var mock = new MockHttpMessageHandler();
-                using (var adapter = new FourKitesAdapter(
-                    new FourKitesClient(mock, TimeSpan.FromSeconds(5)), crossRef: null))
-                {
-                    var result = await adapter.DispatchAsync(new LoadStatusEvent
-                    {
-                        VectorLoadId = "L", SourceSystem = "T",
-                        StatusType = LoadStatusType.ArrivedAtPickup,
-                        StatusTimeUtc = DateTime.UtcNow
-                    }, NewProfile());
+                mock.QueueResponse(HttpStatusCode.Accepted,
+                    @"{""requestId"":""abc-123"",""status"":""202"",""message"":""API Request Accepted""}");
 
-                    TestHarness.Assert(!result.Success, "Skipped is not Success");
-                    TestHarness.AssertContains(result.ErrorMessage, "FK does its own truck tracking",
-                        "skip reason is explicit");
-                }
-
-                TestHarness.AssertEqual(0, mock.Requests.Count, "no HTTP call");
-            }).GetAwaiter().GetResult();
-
-            TestHarness.RunAsync("Adapter. LocationReportedEvent returns Skipped", async () =>
-            {
-                var mock = new MockHttpMessageHandler();
                 using (var adapter = new FourKitesAdapter(
                     new FourKitesClient(mock, TimeSpan.FromSeconds(5)), crossRef: null))
                 {
                     var result = await adapter.DispatchAsync(new LocationReportedEvent
                     {
-                        VectorLoadId = "L", SourceSystem = "T",
-                        Latitude = "35.1", Longitude = "-90.1",
-                        LocatedAtUtc = DateTime.UtcNow
+                        VectorLoadId = "999001", SourceSystem = "Test",
+                        Latitude = "35.149500", Longitude = "-90.049000",
+                        City = "Memphis", State = "TN",
+                        LocatedAtUtc = new DateTime(2026, 6, 19, 22, 15, 5, DateTimeKind.Utc)
                     }, NewProfile());
 
-                    TestHarness.Assert(!result.Success, "Skipped is not Success");
-                    TestHarness.AssertContains(result.ErrorMessage, "FK does its own truck tracking", "skip reason");
+                    TestHarness.Assert(result.Success, "location dispatch succeeded");
                 }
 
-                TestHarness.AssertEqual(0, mock.Requests.Count);
+                TestHarness.AssertEqual(1, mock.Requests.Count);
+                TestHarness.AssertContains(mock.Requests[0].RequestUri.ToString(),
+                    "/load/update/dispatcher-api/async", "dispatcher endpoint");
+
+                var body = mock.SentBodies[0];
+                TestHarness.AssertContains(body, "locationUpdate", "locationUpdate sub-object");
+                TestHarness.AssertContains(body, "\"latitude\":\"35.149500\"", "lat as string");
+                TestHarness.AssertContains(body, "\"longitude\":\"-90.049000\"", "lon as string");
+                TestHarness.AssertContains(body, "2026-06-19T22:15:05Z", "timestamp with Z");
+                TestHarness.AssertContains(body, "\"billToCode\":\"2215324\"", "billToCode threaded through");
+                TestHarness.AssertContains(body, "\"identifier\":\"999001\"", "loadNumber as identifier");
+                TestHarness.Assert(!body.Contains("eventUpdate"), "no eventUpdate when only location");
             }).GetAwaiter().GetResult();
 
-            TestHarness.RunAsync("Adapter. LoadCreatedEvent returns Skipped (Phase 2 deferred)", async () =>
+            TestHarness.RunAsync("Adapter. LoadStatusEvent hits POST /load/update/dispatcher-api/async with eventUpdate", async () =>
             {
                 var mock = new MockHttpMessageHandler();
+                mock.QueueResponse(HttpStatusCode.Accepted,
+                    @"{""requestId"":""def-456"",""status"":""202"",""message"":""API Request Accepted""}");
+
+                using (var adapter = new FourKitesAdapter(
+                    new FourKitesClient(mock, TimeSpan.FromSeconds(5)), crossRef: null))
+                {
+                    var result = await adapter.DispatchAsync(new LoadStatusEvent
+                    {
+                        VectorLoadId = "999001", SourceSystem = "Test",
+                        StatusType = LoadStatusType.ArrivedAtPickup,
+                        SourceStatusCode = "ARRIVED_PICKUP",
+                        SourceStatusDescription = "Arrived at pickup location",
+                        StatusTimeUtc = new DateTime(2026, 6, 19, 22, 30, 0, DateTimeKind.Utc)
+                    }, NewProfile());
+
+                    TestHarness.Assert(result.Success, "status dispatch succeeded");
+                }
+
+                TestHarness.AssertEqual(1, mock.Requests.Count);
+                TestHarness.AssertContains(mock.Requests[0].RequestUri.ToString(),
+                    "/load/update/dispatcher-api/async", "dispatcher endpoint");
+
+                var body = mock.SentBodies[0];
+                TestHarness.AssertContains(body, "eventUpdate", "eventUpdate sub-object");
+                TestHarness.AssertContains(body, "\"statusCode\":\"X1\"", "X1 EDI 214 code for ArrivedAtPickup");
+                TestHarness.AssertContains(body, "2026-06-19T22:30:00Z", "timestamp with Z");
+                TestHarness.Assert(!body.Contains("locationUpdate"), "no locationUpdate when only status");
+            }).GetAwaiter().GetResult();
+
+            TestHarness.RunAsync("Adapter. LoadStatusEvent of type Delivered sets delivered=true flag", async () =>
+            {
+                var mock = new MockHttpMessageHandler();
+                mock.QueueResponse(HttpStatusCode.Accepted, @"{""requestId"":""x"",""status"":""202""}");
+
+                using (var adapter = new FourKitesAdapter(
+                    new FourKitesClient(mock, TimeSpan.FromSeconds(5)), crossRef: null))
+                {
+                    await adapter.DispatchAsync(new LoadStatusEvent
+                    {
+                        VectorLoadId = "999001", SourceSystem = "Test",
+                        StatusType = LoadStatusType.Delivered,
+                        StatusTimeUtc = DateTime.UtcNow
+                    }, NewProfile());
+                }
+
+                TestHarness.AssertContains(mock.SentBodies[0], "\"delivered\":true",
+                    "delivered flag set when status is Delivered");
+            }).GetAwaiter().GetResult();
+
+            TestHarness.RunAsync("Adapter. LoadCreatedEvent hits POST /api/v1/tracking (FBS-origin Create)", async () =>
+            {
+                var mock = new MockHttpMessageHandler();
+                mock.QueueResponse(HttpStatusCode.OK,
+                    @"{""loadId"":681081180,""message"":""Load created successfully"",""statusCode"":200}");
+
                 using (var adapter = new FourKitesAdapter(
                     new FourKitesClient(mock, TimeSpan.FromSeconds(5)), crossRef: null))
                 {
                     var result = await adapter.DispatchAsync(new LoadCreatedEvent
                     {
-                        VectorLoadId = "L", SourceSystem = "T", Mode = "TL"
+                        VectorLoadId = "999001", SourceSystem = "FBS", Mode = "TL",
+                        Origin = new StopInfo
+                        {
+                            SequenceNumber = 1, Role = StopRole.Pickup,
+                            Name = "Memphis Warehouse", AddressLine1 = "123 Main",
+                            City = "Memphis", State = "TN",
+                            ScheduledArrivalUtc = new DateTime(2026,6,27,8,0,0,DateTimeKind.Utc),
+                            ScheduledDepartureUtc = new DateTime(2026,6,27,16,0,0,DateTimeKind.Utc)
+                        },
+                        Destination = new StopInfo
+                        {
+                            SequenceNumber = 2, Role = StopRole.Delivery,
+                            Name = "Nashville DC", AddressLine1 = "456 Broadway",
+                            City = "Nashville", State = "TN",
+                            ScheduledArrivalUtc = new DateTime(2026,6,28,8,0,0,DateTimeKind.Utc),
+                            ScheduledDepartureUtc = new DateTime(2026,6,28,16,0,0,DateTimeKind.Utc)
+                        }
                     }, NewProfile());
 
-                    TestHarness.Assert(!result.Success, "LoadCreatedEvent skipped in Phase 1");
-                    TestHarness.AssertContains(result.ErrorMessage, "LoadAssignedEvent", "skip reason");
+                    TestHarness.Assert(result.Success, "Create succeeded");
+                    TestHarness.AssertEqual("681081180", result.VendorLoadId, "FK loadId captured");
+                    TestHarness.AssertEqual("LOAD_CREATION", result.ExpectedCallbackType);
                 }
 
-                TestHarness.AssertEqual(0, mock.Requests.Count);
+                TestHarness.AssertEqual(1, mock.Requests.Count);
+                TestHarness.AssertContains(mock.Requests[0].RequestUri.ToString(),
+                    "/api/v1/tracking", "Create endpoint");
+                TestHarness.AssertContains(mock.SentBodies[0], "\"loadNumber\":\"999001\"", "loadNumber in payload");
+                TestHarness.AssertContains(mock.SentBodies[0], "\"carrier\":\"VCTR\"", "carrier SCAC in payload");
             }).GetAwaiter().GetResult();
 
             // ─── CanHandle ────────────────────────────────────────────────

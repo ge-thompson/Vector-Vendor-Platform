@@ -15,18 +15,20 @@ namespace Vendor.FourKites
     /// into FK API calls per the official spec at docs.fourkites.com/api-reference.
     ///
     /// Event routing:
-    ///   LoadAssignedEvent         -> POST /api/v1/tracking         (first time)
-    ///                                PATCH /api/v1/tracking/{loadId} (subsequent)
-    ///                                Distinguishes via LoadCrossReference lookup
+    ///   LoadCreatedEvent          -> POST /api/v1/tracking         (Create, from FBS)
+    ///                                Cross-reference captured on 2xx.
+    ///   LoadAssignedEvent         -> POST /api/v1/tracking         (Create, if no xref)
+    ///                                PATCH /api/v1/tracking/{loadId} (Update, if xref)
+    ///                                Distinguishes via LoadCrossReference lookup.
+    ///   LocationReportedEvent     -> POST /load/update/dispatcher-api/async (locationUpdate)
+    ///   LoadStatusEvent           -> POST /load/update/dispatcher-api/async (eventUpdate)
     ///   LoadTrackingStoppedEvent  -> POST /api/v1/tracking/delete_loads
     ///   DocumentAvailableEvent    -> POST /document-data/upload (base64 JSON)
     ///
-    ///   LoadCreatedEvent          -> SKIPPED  (Phase 2 will originate Create from FBS;
-    ///                                          Phase 1 origin is LoadAssignedEvent above)
-    ///   LoadStatusEvent           -> SKIPPED  (O-006: FK does its own tracking once
-    ///                                          driverPhone is handed off; no FK endpoint
-    ///                                          for pushing TT-sourced status updates IN)
-    ///   LocationReportedEvent     -> SKIPPED  (same reason as LoadStatusEvent)
+    /// Identifier strategy for dispatcher updates: the dispatcher endpoint identifies
+    /// loads by loadNumber + billToCode (not the FK-issued loadId), so location/status
+    /// dispatch does NOT require a cross-reference lookup. Cross-ref is only needed for
+    /// Update (PATCH) and Delete operations that target the FK loadId in the URL path.
     ///
     /// THREE CONTRACT RULES (from IVendorAdapter docs) — verified in tests:
     ///   1. NEVER throw out of DispatchAsync — every code path returns a VendorOperationResult
@@ -84,10 +86,8 @@ namespace Vendor.FourKites
         // ─── IVendorAdapter ───────────────────────────────────────────────
 
         /// <summary>
-        /// Returns true if FK accepts this event type. The adapter dispatches:
-        ///   LoadAssignedEvent, LoadTrackingStoppedEvent, DocumentAvailableEvent.
-        /// LoadCreatedEvent / LoadStatusEvent / LocationReportedEvent are accepted
-        /// at this layer but dispatched as Skipped (see DispatchAsync).
+        /// Returns true if FK accepts this event type. Every supported event type maps to
+        /// a real FK call (no Skipped events in the current routing).
         /// </summary>
         public bool CanHandle(VendorEvent evt)
         {
@@ -125,16 +125,7 @@ namespace Vendor.FourKites
             }
 
             // ─── 3. Quick exits for events FK doesn't accept ─────────────
-            // See class-level routing comment for the rationale on each.
-
-            if (evt is LoadCreatedEvent)
-                return VendorOperationResult.Skipped(
-                    "FK Phase 1 originates Create via LoadAssignedEvent. LoadCreatedEvent is Phase 2 (FBS origin).");
-
-            if (evt is LoadStatusEvent || evt is LocationReportedEvent)
-                return VendorOperationResult.Skipped(
-                    "FK does its own truck tracking once driverPhone is handed off (O-006). " +
-                    "No FK endpoint exists for pushing TT-sourced status/location updates IN.");
+            // (No quick-exits currently — every event type below routes to a real FK call.)
 
             // ─── 4. Rate limit check (only for events that actually hit FK) ─
             EnsureRateLimiter(cfg);
@@ -149,8 +140,20 @@ namespace Vendor.FourKites
             {
                 switch (evt)
                 {
+                    case LoadCreatedEvent loadCreated:
+                        // Create can originate from FBS (LoadCreatedEvent) OR from OTR API
+                        // (LoadAssignedEvent). Route both through the same Create-or-Update logic
+                        // keyed on the cross-reference table.
+                        return await DispatchLoadCreatedAsync(loadCreated, cfg, cancellationToken).ConfigureAwait(false);
+
                     case LoadAssignedEvent loadAssigned:
                         return await DispatchLoadAssignedAsync(loadAssigned, cfg, cancellationToken).ConfigureAwait(false);
+
+                    case LocationReportedEvent location:
+                        return await DispatchLocationAsync(location, cfg, cancellationToken).ConfigureAwait(false);
+
+                    case LoadStatusEvent status:
+                        return await DispatchStatusAsync(status, cfg, cancellationToken).ConfigureAwait(false);
 
                     case LoadTrackingStoppedEvent stopped:
                         return await DispatchLoadStoppedAsync(stopped, cfg, cancellationToken).ConfigureAwait(false);
@@ -171,7 +174,61 @@ namespace Vendor.FourKites
             }
         }
 
-        // ─── LoadAssignedEvent: Create-or-Update routing ──────────────────
+        // ─── LoadCreatedEvent: Create (from FBS, no driver yet) ────────
+
+        private async Task<VendorOperationResult> DispatchLoadCreatedAsync(
+            LoadCreatedEvent evt, FourKitesConfig cfg, CancellationToken ct)
+        {
+            // FBS fires LoadCreatedEvent when the load first lands from the customer (EDI 204).
+            // At this point we know the stops and load metadata but no driver is assigned yet —
+            // trackingInfo (driverPhone, truck #, trailer #) will land later via LoadAssignedEvent
+            // when OTR API TrackLoad fires.
+
+            // Check for existing cross-ref. If the load already exists in FK (unusual, but
+            // could happen if FBS replays an event), skip to avoid creating a duplicate.
+            if (_crossRef != null)
+            {
+                try
+                {
+                    var existing = await _crossRef.GetFkLoadIdAsync(evt.VectorLoadId, ct).ConfigureAwait(false);
+                    if (existing.HasValue)
+                    {
+                        return VendorOperationResult.Skipped(
+                            "FK load already exists for VectorLoadId " + evt.VectorLoadId +
+                            " (FK loadId " + existing.Value + "). Skipping duplicate Create.");
+                    }
+                }
+                catch (Exception lookupEx)
+                {
+                    _onError(lookupEx);
+                    // Fall through to Create — FK will reject duplicates if it has the load.
+                }
+            }
+
+            var payload = PayloadBuilder.BuildLoadCreateFromCreated(evt, cfg);
+            var createUrl = cfg.BaseUrl + cfg.LoadCreateEndpoint;
+            var response = await _client.PostJsonAsync(createUrl, cfg.ApiKey, payload.Json, ct).ConfigureAwait(false);
+
+            // On 2xx, capture FK loadId for future Update/Delete lookups.
+            if (response.IsSuccess && _crossRef != null)
+            {
+                if (long.TryParse(response.VendorLoadId, out var newFkLoadId) && newFkLoadId > 0)
+                {
+                    try
+                    {
+                        await _crossRef.PersistAsync(evt.VectorLoadId, newFkLoadId, "ACTIVE", ct).ConfigureAwait(false);
+                    }
+                    catch (Exception persistEx)
+                    {
+                        _onError(persistEx);
+                    }
+                }
+            }
+
+            return TranslateResponse(response, payload, expectedCallbackType: "LOAD_CREATION");
+        }
+
+        // ─── LoadAssignedEvent: Create-or-Update routing ──────────────
 
         private async Task<VendorOperationResult> DispatchLoadAssignedAsync(
             LoadAssignedEvent evt, FourKitesConfig cfg, CancellationToken ct)
@@ -229,6 +286,32 @@ namespace Vendor.FourKites
             }
 
             return TranslateResponse(response, payload, expectedCallbackType: "LOAD_CREATION");
+        }
+
+        // ─── LocationReportedEvent: dispatcher update with locationUpdate ─────
+
+        private async Task<VendorOperationResult> DispatchLocationAsync(
+            LocationReportedEvent evt, FourKitesConfig cfg, CancellationToken ct)
+        {
+            // Dispatcher endpoint identifies the load by loadNumber + billToCode — no FK loadId
+            // needed, so no cross-reference lookup required. This is the high-volume path
+            // (one event every ~15 minutes per active load).
+            var payload = PayloadBuilder.BuildDispatcherLocation(evt, cfg);
+            var fullUrl = cfg.BaseUrl + cfg.DispatcherUpdateEndpoint;
+            var response = await _client.PostJsonAsync(fullUrl, cfg.ApiKey, payload.Json, ct).ConfigureAwait(false);
+            return TranslateResponse(response, payload);
+        }
+
+        // ─── LoadStatusEvent: dispatcher update with eventUpdate ──────────
+
+        private async Task<VendorOperationResult> DispatchStatusAsync(
+            LoadStatusEvent evt, FourKitesConfig cfg, CancellationToken ct)
+        {
+            // Same endpoint as location; eventUpdate sub-object carries the status code.
+            var payload = PayloadBuilder.BuildDispatcherStatus(evt, cfg);
+            var fullUrl = cfg.BaseUrl + cfg.DispatcherUpdateEndpoint;
+            var response = await _client.PostJsonAsync(fullUrl, cfg.ApiKey, payload.Json, ct).ConfigureAwait(false);
+            return TranslateResponse(response, payload);
         }
 
         // ─── LoadTrackingStoppedEvent: Delete ────────────────────────────

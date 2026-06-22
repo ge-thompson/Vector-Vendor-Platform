@@ -62,6 +62,61 @@ namespace Vendor.FourKites.Mapping
             return new BuildResult { Json = body.ToString(Formatting.None), RequestId = requestId };
         }
 
+        // ─── Load Create from LoadCreatedEvent (POST /api/v1/tracking) ───
+        // Fires when FBS creates a load from a customer order (EDI 204). No driver yet —
+        // trackingInfo (driverPhone, truck #, trailer #) will arrive later via
+        // LoadAssignedEvent (Update path).
+
+        public static BuildResult BuildLoadCreateFromCreated(LoadCreatedEvent evt, FourKitesConfig cfg)
+        {
+            var requestId = Guid.NewGuid().ToString();
+
+            var load = new JObject
+            {
+                ["loadNumber"] = evt.VectorLoadId,
+                ["carrier"]    = cfg.VectorScac,
+                ["haulType"]   = new JArray(cfg.DefaultHaulType ?? "brokered_load")
+            };
+
+            // Reference numbers (PO, BOL, etc.) come straight off the event.
+            if (evt.References != null && evt.References.Count > 0)
+            {
+                var refs = evt.References
+                    .Where(r => r != null && !string.IsNullOrWhiteSpace(r.Value))
+                    .Select(r => r.Value)
+                    .ToList();
+                if (refs.Count > 0)
+                    load["referenceNumbers"] = new JArray(refs);
+            }
+
+            // Stops: prefer Stops[] if populated, else fall back to Origin + Destination.
+            List<StopInfo> stops = evt.Stops;
+            if (stops == null || stops.Count == 0)
+            {
+                stops = new List<StopInfo>();
+                if (evt.Origin != null)      stops.Add(evt.Origin);
+                if (evt.Destination != null) stops.Add(evt.Destination);
+            }
+
+            if (stops.Count > 0)
+                load["stops"] = new JArray(stops.Select(BuildStop));
+
+            var body = new JObject
+            {
+                ["additionalData"] = new JObject
+                {
+                    ["modeDetails"] = new JObject
+                    {
+                        ["shipperModes"] = evt.Mode ?? "TL",
+                        ["carrierModes"] = evt.Mode ?? "TL"
+                    }
+                },
+                ["load"] = load
+            };
+
+            return new BuildResult { Json = body.ToString(Formatting.None), RequestId = requestId };
+        }
+
         // ─── Load Update (PATCH /api/v1/tracking/{fkLoadId}) ─────────────
         // Fires on a subsequent LoadAssignedEvent (driver reassignment, etc.)
         // when LoadCrossReference already has an FK loadId for this VectorLoadId.
@@ -113,6 +168,94 @@ namespace Vendor.FourKites.Mapping
             // (CANCELLED / STOPPED / DELIVERED) is logged in VendorOutboundTransactions
             // but not transmitted to FK — they only learn the load is being stopped.
             return new BuildResult { Json = body.ToString(Formatting.None), RequestId = requestId };
+        }
+
+        // ─── Dispatcher Update (POST /load/update/dispatcher-api/async) ──
+        // Single endpoint that carries locationUpdate and/or eventUpdate sub-objects.
+        // Used by both LocationReportedEvent (locationUpdate only) and LoadStatusEvent
+        // (eventUpdate only). When both arrive in the same TT callback we COULD batch
+        // into one call — the framework currently dispatches separately so each event
+        // becomes its own audit row, which is the right tradeoff for Phase 1 visibility.
+
+        public static BuildResult BuildDispatcherLocation(LocationReportedEvent evt, FourKitesConfig cfg)
+        {
+            var requestId = Guid.NewGuid().ToString();
+
+            var locationUpdate = new JObject
+            {
+                // FK requires lat/lon as STRINGS in Decimal Degrees format
+                ["latitude"]  = evt.Latitude  ?? "",
+                ["longitude"] = evt.Longitude ?? "",
+                // ISO 8601 with Z suffix (different from stop appointment times which omit Z)
+                ["locatedAt"] = ToFkUtcIso(evt.LocatedAtUtc)
+            };
+            if (!string.IsNullOrWhiteSpace(evt.City))  locationUpdate["city"]  = evt.City;
+            if (!string.IsNullOrWhiteSpace(evt.State)) locationUpdate["state"] = evt.State;
+
+            var body = BuildDispatcherEnvelope(evt.VectorLoadId, cfg, locationUpdate: locationUpdate, eventUpdate: null);
+            return new BuildResult { Json = body.ToString(Formatting.None), RequestId = requestId };
+        }
+
+        public static BuildResult BuildDispatcherStatus(LoadStatusEvent evt, FourKitesConfig cfg)
+        {
+            var requestId = Guid.NewGuid().ToString();
+
+            // Use the same status mapper that drives LoadStatusEvent codes — the FK template
+            // maps LoadStatusType to EDI 214 codes (X1/AF/X3/CD/D1/OA/X9). Keep it.
+            var statusCode = LoadStatusMapper.MapFromEvent(evt);
+
+            var eventUpdate = new JObject
+            {
+                ["statusCode"]     = statusCode,
+                ["eventTimeStamp"] = ToFkUtcIso(evt.StatusTimeUtc)
+            };
+            if (!string.IsNullOrWhiteSpace(evt.SourceStatusDescription))
+                eventUpdate["statusDescription"] = evt.SourceStatusDescription;
+            if (!string.IsNullOrWhiteSpace(evt.SourceStatusCode))
+                eventUpdate["statusReasonCode"] = evt.SourceStatusCode;
+            // "delivered" flag: only set true when the status is Delivered so FK can flip the load
+            if (evt.StatusType == LoadStatusType.Delivered)
+                eventUpdate["delivered"] = true;
+
+            var body = BuildDispatcherEnvelope(evt.VectorLoadId, cfg, locationUpdate: null, eventUpdate: eventUpdate);
+            return new BuildResult { Json = body.ToString(Formatting.None), RequestId = requestId };
+        }
+
+        /// <summary>
+        /// Shared envelope builder for the Dispatcher Update endpoint. Produces:
+        ///   { "updates": [{ "billToCode": ..., "identifierKeys": [...], "loadUpdate": [{ ... }] }] }
+        /// Caller passes in whichever sub-object(s) apply (locationUpdate, eventUpdate, or both).
+        /// </summary>
+        private static JObject BuildDispatcherEnvelope(
+            string vectorLoadId,
+            FourKitesConfig cfg,
+            JObject locationUpdate,
+            JObject eventUpdate)
+        {
+            // Identify the load by Vector's loadNumber. billToCode scopes the match to
+            // the right shipper. FK matches on identifierKeys[0] first, then [1], etc.
+            var identifierKey = new JObject
+            {
+                ["identifier"]     = vectorLoadId,
+                ["identifierType"] = "loadNumber"
+            };
+
+            var loadUpdate = new JObject();
+            if (locationUpdate != null) loadUpdate["locationUpdate"] = locationUpdate;
+            if (eventUpdate    != null) loadUpdate["eventUpdate"]    = eventUpdate;
+
+            var update = new JObject
+            {
+                ["timeZone"]       = "UTC",
+                ["billToCode"]     = cfg.BillToCode,
+                ["identifierKeys"] = new JArray(identifierKey),
+                ["loadUpdate"]     = new JArray(loadUpdate)
+            };
+
+            return new JObject
+            {
+                ["updates"] = new JArray(update)
+            };
         }
 
         // ─── Document Upload (POST /document-data/upload) ────────────────
@@ -260,10 +403,10 @@ namespace Vendor.FourKites.Mapping
             if (!string.IsNullOrWhiteSpace(stop.Country))
                 jo["country"] = stop.Country;
 
-            // FK accepts lat/lon as decimal degrees (decimal, not string). We store strings on
-            // StopInfo; parse and emit as decimal so FK doesn't bounce on type.
-            if (TryParseDecimal(stop.Latitude, out var lat))   jo["latitude"]  = lat;
-            if (TryParseDecimal(stop.Longitude, out var lon))  jo["longitude"] = lon;
+            // FK accepts lat/lon as decimal degrees in STRING form (per spec:
+            // "The only accepted format of lat/long by FOURKITES is the 'Decimal Degrees' format").
+            if (!string.IsNullOrWhiteSpace(stop.Latitude))   jo["latitude"]  = stop.Latitude;
+            if (!string.IsNullOrWhiteSpace(stop.Longitude))  jo["longitude"] = stop.Longitude;
 
             // Required: earliest + latest appointment times. ISO 8601 in stop's LOCAL TIMEZONE,
             // NO Z, NO offset. e.g. "2026-01-15T08:00:00". Fall back to occurredUtc if we don't
@@ -368,6 +511,16 @@ namespace Vendor.FourKites.Mapping
         {
             // Strip Z / offset by formatting without the K specifier.
             return utc.ToString("yyyy-MM-ddTHH:mm:ss");
+        }
+
+        /// <summary>
+        /// Formats a DateTime as ISO 8601 with Z suffix — FK's Dispatcher Update endpoint
+        /// expects timestamps in UTC with the Z marker (e.g. "2026-06-19T22:15:05Z").
+        /// Different from stop appointment times which omit the Z.
+        /// </summary>
+        private static string ToFkUtcIso(DateTime utc)
+        {
+            return utc.ToString("yyyy-MM-ddTHH:mm:ssZ");
         }
 
         private static bool TryParseDecimal(string s, out decimal value)

@@ -69,37 +69,84 @@ Production.
 
 ## O-005: Verbatim 4xx JSON body shape from tracking endpoints
 
-**Question:** The FK docs publish an error table (`400 Load information is
-empty`, `409 API call limit exceeded`, etc.) but not the actual JSON body
-shape returned on a 4xx. The document-data endpoint shows a `sub_errors[]`
-shape, but it's unclear if tracking endpoints follow the same.
+**Status: RESOLVED via production testing (Tx 136) + FK docs extraction.**
 
-**Assumed:** Errors are logged verbatim in
-`VendorOutboundTransactions.ResponseBody`. The framework doesn't need to parse
-them right now — it categorizes by HTTP status code, not body. Future
-improvement: parse the body for field-level error messages and surface them
-in `VendorOutboundTransactions.ErrorMessage`.
+FK's 4xx responses use one of two shapes depending on endpoint:
 
-**What we need from FK:** A sample 4xx JSON body for the tracking endpoints.
+Load Create / Update / Delete (`/api/v1/tracking/*`):
+```json
+{
+  "errors": ["Stops cannot have appointment time earlier than 4 days", "Driver phone is invalid"],
+  "message": "",
+  "requestId": "d8qruc6i9rjrcfre85cg",
+  "statusCode": 400
+}
+```
+
+Dispatcher Update (`/load/update/dispatcher-api/async`):
+```json
+{
+  "requestId": "5aed0c8a-fb50-442c-bcce-aee0150587dc",
+  "status": "400",
+  "message": "Updates Array cannot be empty",
+  "timestamp": "2023-09-14T17:53:49.356497"
+}
+```
+
+Document-data may also use the `sub_errors[]` shape (per FK docs).
+
+**Current handling:** errors are logged verbatim in `VendorOutboundTransactions.ResponseBody`. Future improvement: parse field-level messages from the `errors[]` array and surface them in `VendorOutboundTransactions.ErrorMessage`.
 
 ---
 
-## O-006: Are LoadStatusEvent / LocationReportedEvent useful to FK?
+## O-006: Carrier-side Location / Status push to FK
 
-**Question:** FK's model appears to be: once we hand them `trackingInfo`
-(driver phone, truck #, trailer #), FK tracks the truck themselves via the
-CarrierLink app or carrier integrations and pushes status/location updates
-BACK to us via webhook. The FK Tracking API does not expose an endpoint for
-pushing TT-sourced status or location updates INTO FK.
+**Status: RESOLVED via FK docs extraction (corrects earlier wrong-headed conclusion).**
 
-**Assumed:** The FK adapter **skips** LoadStatusEvent and LocationReportedEvent
-(returns `VendorOperationResult.Skipped("FK does its own tracking once handoff
-is complete")`). These events still fire in the framework — other vendors may
-want them — but FK gets `0` events from SendStatus dispatch.
+**Original mistake:** prior version of this doc claimed "FK does its own truck tracking
+once driverPhone is handed off; no FK endpoint exists for pushing TT-sourced location
+or status updates IN." That was wrong. Vector is the registered carrier on these loads,
+and pushing TT-sourced location + status updates to FK is the whole point of the
+integration.
 
-**What we need from FK:** Confirmation that this is correct. If FK does want
-TT-sourced status updates, they should point us at the endpoint and we'll
-wire them in.
+**Actual model:** there's a single endpoint that carries both location and status
+updates (and ETA, temperature, etc.):
+
+```
+POST https://api.fourkites.com/load/update/dispatcher-api/async
+auth: apikey header (same as Load Create)
+```
+
+Payload shape:
+```json
+{
+  "updates": [{
+    "timeZone": "UTC",
+    "billToCode": "2215324",
+    "identifierKeys": [{ "identifier": "<loadNumber>", "identifierType": "loadNumber" }],
+    "loadUpdate": [{
+      "locationUpdate": { "latitude": "...", "longitude": "...", "locatedAt": "<ISO 8601 with Z>" },
+      "eventUpdate":    { "statusCode": "X1", "eventTimeStamp": "<ISO 8601 with Z>" }
+    }]
+  }]
+}
+```
+
+Key shape facts:
+- Lat/lon are **strings** in Decimal Degrees format.
+- Timestamps are ISO 8601 **with Z** (different from stop appointment times in Load Create which omit the Z).
+- Load is identified by `loadNumber` + `billToCode` — no FK loadId needed, so no cross-reference lookup on the location/status path.
+- One `locationUpdate` and one `eventUpdate` per `loadUpdate` (no arrays).
+- Returns HTTP 202 Accepted (async).
+- Up to 200 updates per call (we send one per dispatch in Phase 1).
+
+**Current adapter routing (after rev 2 rewrite):**
+- `LocationReportedEvent` -> dispatcher endpoint with `locationUpdate` only
+- `LoadStatusEvent` -> dispatcher endpoint with `eventUpdate` only
+- `LoadStatusType.Delivered` -> sets `delivered: true` flag on eventUpdate so FK flips the load
+
+**Status mapping:** FK accepts EDI 214 codes (X1, AF, X3, CD, D1, OA, X9). Vector's
+`LoadStatusType` enum already maps to these via `LoadStatusMapper`.
 
 ---
 
@@ -141,16 +188,19 @@ are BLD, PSD, BL, PS, CD, DR, IV, WC, WI, WP, FB, PO, OD, FA, LR.
 
 ## O-009: Rate limit headers
 
-**Question:** FK docs state a 1 req/sec limit on Create. Does FK return rate-
-limit headers in response (`X-RateLimit-Remaining`, `Retry-After`, etc.) we
-can use to back off intelligently?
+**Status: PARTIALLY RESOLVED via FK docs extraction.**
 
-**Assumed:** Local InMemoryRateLimiter throttles us to 1 req/sec before we
-even hit FK. On 429 from FK (which shouldn't happen if our local limiter
-works), we treat it as a transient retryable failure with no header parsing.
+FK documents 1 req/sec / 60 req/min per apikey on the Dispatcher Update endpoint.
+Over-limit returns HTTP 429 with these response headers:
+- `X-RateLimit-Limit-minute`
+- `X-RateLimit-Remaining-minute`
 
-**What we need from FK:** Sample 429 response (if any).
+Whether the Load Create endpoint shares the same 60/min counter or has its own
+is still unconfirmed.
 
+**Current handling:** local InMemoryRateLimiter throttles before HTTP. On 429 we
+treat as transient retryable. Future improvement: read the headers FK returns and
+adjust our local limiter accordingly.
 ---
 
 ## O-010: Webhook payload retry semantics

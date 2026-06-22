@@ -131,6 +131,15 @@ namespace Vendor.FourKites
         [JsonIgnore] public string LoadDeleteEndpoint   => "/api/v1/tracking/delete_loads";
         [JsonIgnore] public string DocumentUploadEndpoint => "/document-data/upload";
 
+        /// <summary>
+        /// Carrier-side Dispatcher Update endpoint. Used for posting in-motion location
+        /// reports and status milestones (events) once tracking is active. Vector is the
+        /// registered Carrier on these loads, so we push to this endpoint as the carrier.
+        /// One endpoint carries locationUpdate, eventUpdate, and other sub-objects — the
+        /// adapter chooses which sub-objects to include based on the event type.
+        /// </summary>
+        [JsonIgnore] public string DispatcherUpdateEndpoint => "/load/update/dispatcher-api/async";
+
         // ─── Environment URL table ──────────────────────────────────────
 
         // Per FK docs/api-reference Create Shipment Request panel.
