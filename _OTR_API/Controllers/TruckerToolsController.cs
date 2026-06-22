@@ -278,6 +278,14 @@ namespace OTR_API.Controllers
         {
             LoadResponse response = new LoadResponse();
 
+            DataSettings ds = new DataSettings();
+            if (!ds.IsEnabled("LoadboardEnabled"))
+            {
+                response.Status = true;
+                response.Message = "Loadboard disabled";
+                return response;
+            }
+
             DataTruckerToolsMatch dtt = new DataTruckerToolsMatch();
 
             DataLoadMatch dl = new DataLoadMatch();
@@ -317,6 +325,14 @@ namespace OTR_API.Controllers
         {
             LoadResponse response = new LoadResponse();
 
+            DataSettings ds = new DataSettings();
+            if (!ds.IsEnabled("LoadboardEnabled"))
+            {
+                response.Status = true;
+                response.Message = "Loadboard disabled";
+                return response;
+            }
+
             DataTruckerToolsMatch dtt = new DataTruckerToolsMatch();
 
 
@@ -354,6 +370,14 @@ namespace OTR_API.Controllers
             LoadResponse response = new LoadResponse();
 
             List<Load> loadList = new List<Load>();
+
+            DataSettings ds = new DataSettings();
+            if (!ds.IsEnabled("LoadboardEnabled"))
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog("Loadboard disabled", "GetAvailableLoadsDetail");
+                return loadList;
+            }
 
             DataTruckerToolsMatch dtt = new DataTruckerToolsMatch();
 
@@ -396,6 +420,14 @@ namespace OTR_API.Controllers
         public CarrierResponse PostCarrier([FromBody]Carrier carrier)
         {
             CarrierResponse response = new CarrierResponse();
+
+            DataSettings ds = new DataSettings();
+            if (!ds.IsEnabled("LoadboardEnabled"))
+            {
+                response.Status = true;
+                response.Message = "Loadboard disabled";
+                return response;
+            }
 
             DataTruckerToolsMatch dtt = new DataTruckerToolsMatch();
 

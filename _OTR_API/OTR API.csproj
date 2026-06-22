@@ -179,6 +179,7 @@
     <Compile Include="Controllers\UrlController.cs" />
     <Compile Include="DataClasses\DataAccessFBS.cs" />
     <Compile Include="DataClasses\DataClassTT.cs" />
+    <Compile Include="DataClasses\DataSettings.cs" />
     <Compile Include="DataClasses\FireBaseNotifcation.cs" />
     <Compile Include="DataClasses\AES256CBCEncrypt.cs" />
     <Compile Include="DataClasses\WebCallFunctions.cs" />
