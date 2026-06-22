@@ -29,6 +29,7 @@ namespace OTR_API.Controllers
                 response.response.Message = "Error Tracking Load";
             }
             else {
+                
 
                 DataTruckerToolsTracking dtt = new DataTruckerToolsTracking();
 
