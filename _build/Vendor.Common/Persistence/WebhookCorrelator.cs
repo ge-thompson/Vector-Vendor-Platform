@@ -210,8 +210,8 @@ namespace Vendor.Common.Persistence
             await _inboundRepo.LinkCorrelatedAsync(cn, callback.CallbackId, matchedTxId.Value, ct)
                               .ConfigureAwait(false);
 
-            // 6. Let the vendor's processor do its side effects (e.g., FK adapter
-            // stamping FourKitesLoadId on Vector's Load table). Per the contract,
+            // 6. Let the vendor's processor do its side effects (e.g., stamping the
+            // vendor's load id on Vector's Load table). Per the contract,
             // OnConfirmedAsync should not throw — but defensive catch anyway so a
             // side-effect failure doesn't unwind the correlation we just recorded.
             try

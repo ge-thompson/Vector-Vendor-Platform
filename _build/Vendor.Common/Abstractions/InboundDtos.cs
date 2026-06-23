@@ -13,20 +13,20 @@ namespace Vendor.Common.Abstractions
     public class InboundEventMetadata
     {
         /// <summary>
-        /// Vendor-defined event/message type from the payload (e.g., FK's "LOAD_CREATION",
+        /// Vendor-defined event/message type from the payload (e.g., a vendor's "LOAD_CREATION",
         /// "STOP_ARRIVAL", or any vendor-specific string).
         /// </summary>
         public string MessageType { get; set; }
 
         /// <summary>
         /// The vendor's internal load identifier from the payload, if present.
-        /// For FK: FourKitesLoadId. For project44: their shipment id. Etc.
+        /// Whatever the vendor calls their own load/shipment id.
         /// </summary>
         public string VendorLoadId { get; set; }
 
         /// <summary>
         /// VectorLoadId discoverable from the payload, if the vendor echoes back our
-        /// reference. FK echoes loadNumber which IS our VectorLoadId.
+        /// reference. Some vendors echo loadNumber which IS our VectorLoadId.
         /// </summary>
         public string VectorLoadId { get; set; }
 
@@ -38,7 +38,7 @@ namespace Vendor.Common.Abstractions
 
         /// <summary>
         /// Did the vendor report success? Distinct from HTTP-level ACK — this is the
-        /// application-level outcome. FK puts this in an "IsSuccess" field.
+        /// application-level outcome. A vendor may put this in an "IsSuccess" field.
         /// True by default (assume success unless we have evidence otherwise).
         /// </summary>
         public bool IsSuccess { get; set; } = true;

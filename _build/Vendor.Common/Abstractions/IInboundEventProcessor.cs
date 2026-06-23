@@ -47,8 +47,8 @@ namespace Vendor.Common.Abstractions
         /// <summary>
         /// Called by the correlator AFTER a successful match, for vendor-specific
         /// side effects. Examples:
-        /// - FK: stamp FourKitesLoadId on Vector's Load table for LOAD_CREATION callbacks.
-        /// - P44: update local load status to mirror P44's status.
+        /// - stamp the vendor's load id on Vector's Load table for load-creation callbacks.
+        /// - update local load status to mirror the vendor's status.
         ///
         /// Implementations should catch their own errors. The correlator continues
         /// regardless — vendor-specific side-effect failures should not block correlation.

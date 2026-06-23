@@ -215,8 +215,8 @@ WHERE CallbackId = @CallbackId;";
         /// Records that a VectorLoadId has a corresponding VendorLoadId in a vendor's system.
         /// Wraps usp_RecordVendorLoadCrossReference from Deliverable #7.
         ///
-        /// Called from IInboundEventProcessor.OnConfirmedAsync — for FK, this fires when
-        /// a LOAD_CREATION webhook confirms the load was created in FK.
+        /// Called from IInboundEventProcessor.OnConfirmedAsync — for some vendors, this fires when
+        /// a load-creation webhook confirms the load was created in the vendor's system.
         /// </summary>
         public async Task RecordCrossReferenceAsync(
             SqlConnection openConnection,

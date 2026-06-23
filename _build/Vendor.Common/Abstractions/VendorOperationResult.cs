@@ -22,14 +22,14 @@ namespace Vendor.Common.Abstractions
         public int? HttpStatusCode { get; set; }
 
         /// <summary>
-        /// The vendor's own identifier for this request (e.g., FK's requestId GUID,
-        /// project44's tracking id). Used by support teams to correlate with vendor logs.
+        /// The vendor's own identifier for this request (e.g., a vendor's requestId GUID
+        /// or tracking id). Used by support teams to correlate with vendor logs.
         /// </summary>
         public string VendorRequestId { get; set; }
 
         /// <summary>
         /// The vendor's internal load identifier, if the response included one.
-        /// For FK, this is FourKitesLoadId returned on LOAD_CREATION confirmations.
+        /// For some vendors, this is the vendor's load id returned on load-creation confirmations.
         /// Stamped on the outbound transaction so future webhooks can correlate.
         /// </summary>
         public string VendorLoadId { get; set; }

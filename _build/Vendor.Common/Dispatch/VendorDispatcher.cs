@@ -28,7 +28,7 @@ namespace Vendor.Common.Dispatch
     ///   - The dispatcher logs to VendorOutboundTransactions for every code path
     ///     (success, failure, skipped, no-matching-profile).
     ///
-    /// FAN-OUT: if multiple profiles match (shipper X has both FourKites AND project44
+    /// FAN-OUT: if multiple profiles match (shipper X has two vendors
     /// configured for the same event), the dispatcher invokes BOTH adapters in parallel.
     /// Phase 1 has one vendor; the structure is ready for vendor #2 with zero changes.
     /// </summary>

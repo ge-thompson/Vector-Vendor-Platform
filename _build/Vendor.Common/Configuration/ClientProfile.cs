@@ -3,7 +3,7 @@ using System;
 namespace Vendor.Common.Configuration
 {
     /// <summary>
-    /// Per-shipper, per-vendor configuration row from VendorAPI_FK.ClientProfiles.
+    /// Per-shipper, per-vendor configuration row from the ClientProfiles table.
     ///
     /// The framework loads these rows and passes the matching one to the adapter on every
     /// dispatch. Each adapter parses its own <see cref="ConfigJson"/> blob to extract
@@ -22,7 +22,7 @@ namespace Vendor.Common.Configuration
         /// </summary>
         public string ShipperCode { get; set; }
 
-        /// <summary>The vendor this profile configures (e.g., "FourKites", "Project44").</summary>
+        /// <summary>The vendor this profile configures (e.g., "ExampleVendor").</summary>
         public string VendorName { get; set; }
 
         /// <summary>If false, the dispatcher skips this profile entirely. Soft delete.</summary>
@@ -37,8 +37,8 @@ namespace Vendor.Common.Configuration
 
         /// <summary>
         /// Vendor-specific configuration blob. Each adapter parses this for its own needs:
-        /// FK looks for apiKey + billToCode + baseUrl + webhookAuth;
-        /// P44 would look for oauthClientId + oauthClientSecret + region.
+        /// one vendor looks for apiKey + billToCode + baseUrl + webhookAuth;
+        /// another would look for oauthClientId + oauthClientSecret + region.
         /// </summary>
         public string ConfigJson { get; set; }
 

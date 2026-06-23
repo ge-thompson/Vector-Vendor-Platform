@@ -6,10 +6,10 @@ namespace Vendor.Common.Abstractions
     /// Validates the authenticity of an inbound webhook. Implemented per vendor.
     ///
     /// Different vendors authenticate differently:
-    /// - FourKites: transport-level only (apikey header or HTTP Basic auth on the request,
-    ///   NO HMAC body signing per the existing WebhookAuthMiddleware design)
-    /// - Hypothetical future vendor: HMAC-SHA256 of the raw body using a shared secret
-    /// - Hypothetical: JWT in an Authorization header
+    /// - Transport-level only: apikey header or HTTP Basic auth on the request,
+    ///   with no body signing
+    /// - HMAC-SHA256 of the raw body using a shared secret
+    /// - JWT in an Authorization header
     ///
     /// The framework treats all of these uniformly via this interface. The controller
     /// calls IsValid before persisting the callback. Validation failure returns 401 to

@@ -26,7 +26,7 @@ namespace Vendor.Common.Abstractions
     public interface IVendorAdapter
     {
         /// <summary>
-        /// The vendor name this adapter handles (e.g., "FourKites", "Project44").
+        /// The vendor name this adapter handles (e.g., "ExampleVendor").
         /// Must match the VendorName column on ClientProfiles and the vendorName attribute
         /// in the &lt;vendorAdapters&gt; config section.
         /// </summary>

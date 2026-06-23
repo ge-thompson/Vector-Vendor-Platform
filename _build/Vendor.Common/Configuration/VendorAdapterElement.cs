@@ -9,10 +9,10 @@ namespace Vendor.Common.Configuration
     ///
     /// Example config:
     /// <code>
-    /// &lt;add vendorName="FourKites"
-    ///      adapterType="Vendor.FourKites.Adapter.FourKitesAdapter, Vendor.FourKites"
-    ///      inboundProcessorType="Vendor.FourKites.Webhooks.FourKitesWebhookProcessor, Vendor.FourKites"
-    ///      webhookValidatorType="Vendor.FourKites.Webhooks.FourKitesWebhookSignatureValidator, Vendor.FourKites" /&gt;
+    /// &lt;add vendorName="ExampleVendor"
+    ///      adapterType="Vendor.ExampleVendor.Adapter.ExampleVendorAdapter, Vendor.ExampleVendor"
+    ///      inboundProcessorType="Vendor.ExampleVendor.Webhooks.ExampleVendorWebhookProcessor, Vendor.ExampleVendor"
+    ///      webhookValidatorType="Vendor.ExampleVendor.Webhooks.ExampleVendorWebhookSignatureValidator, Vendor.ExampleVendor" /&gt;
     /// </code>
     ///
     /// Only adapterType is required. Inbound types are optional — desktop callers
@@ -21,7 +21,7 @@ namespace Vendor.Common.Configuration
     public class VendorAdapterElement : ConfigurationElement
     {
         /// <summary>
-        /// Vendor identifier (e.g., "FourKites"). Must match the VendorName property
+        /// Vendor identifier (e.g., "ExampleVendor"). Must match the VendorName property
         /// on the adapter class and the VendorName column on ClientProfiles rows.
         /// </summary>
         [ConfigurationProperty("vendorName", IsRequired = true, IsKey = true)]

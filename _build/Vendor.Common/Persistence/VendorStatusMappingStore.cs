@@ -123,7 +123,7 @@ WHERE IsActive = 1;";
         /// Outbound lookup: framework status -> vendor-specific code.
         /// Returns null if no row exists (caller falls back to hardcoded template).
         ///
-        /// Example: GetOutbound("FourKites", "ArrivedAtPickup") -> "X1"
+        /// Example: GetOutbound("ExampleVendor", "ArrivedAtPickup") -> "X1"
         /// </summary>
         public string GetOutbound(string vendorName, string sourceCode)
         {
@@ -138,7 +138,7 @@ WHERE IsActive = 1;";
         /// Inbound lookup: upstream-system code -> framework LoadStatusType (as string).
         /// Returns null if no row exists (caller falls back to hardcoded template).
         ///
-        /// Example: GetInbound("FourKites", "TruckTools", "X1") -> "ArrivedAtPickup"
+        /// Example: GetInbound("ExampleVendor", "TruckTools", "X1") -> "ArrivedAtPickup"
         /// Also accepts vendorName "GLOBAL" for cross-vendor inbound mappings.
         /// </summary>
         public string GetInbound(string vendorName, string sourceSystem, string sourceCode)

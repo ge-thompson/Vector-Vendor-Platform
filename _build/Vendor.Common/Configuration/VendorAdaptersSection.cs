@@ -14,10 +14,10 @@ namespace Vendor.Common.Configuration
     ///
     /// &lt;vendorAdapters&gt;
     ///   &lt;adapters&gt;
-    ///     &lt;add vendorName="FourKites"
-    ///          adapterType="Vendor.FourKites.Adapter.FourKitesAdapter, Vendor.FourKites"
-    ///          inboundProcessorType="Vendor.FourKites.Webhooks.FourKitesWebhookProcessor, Vendor.FourKites"
-    ///          webhookValidatorType="Vendor.FourKites.Webhooks.FourKitesWebhookSignatureValidator, Vendor.FourKites" /&gt;
+    ///     &lt;add vendorName="ExampleVendor"
+    ///          adapterType="Vendor.ExampleVendor.Adapter.ExampleVendorAdapter, Vendor.ExampleVendor"
+    ///          inboundProcessorType="Vendor.ExampleVendor.Webhooks.ExampleVendorWebhookProcessor, Vendor.ExampleVendor"
+    ///          webhookValidatorType="Vendor.ExampleVendor.Webhooks.ExampleVendorWebhookSignatureValidator, Vendor.ExampleVendor" /&gt;
     ///   &lt;/adapters&gt;
     /// &lt;/vendorAdapters&gt;
     /// </code>
