@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Vendor.Common.Configuration;
 
 namespace Vendor.FourKites
 {
@@ -196,49 +197,6 @@ namespace Vendor.FourKites
 
             return cfg;
         }
-    }
-
-    /// <summary>Webhook authentication settings — how FK proves its identity to us.</summary>
-    public class WebhookAuthConfig
-    {
-        /// <summary>Auth scheme: "apikey" (default), "basic", "hmac", or "none". O-003 still open.</summary>
-        public string Scheme { get; set; } = "apikey";
-
-        /// <summary>Header name FK sends the credential in. For apikey scheme.</summary>
-        public string HeaderName { get; set; } = "X-FK-Webhook-Key";
-
-        /// <summary>Expected credential value to match against. For apikey or basic schemes.</summary>
-        public string ExpectedValue { get; set; }
-
-        /// <summary>Basic-auth username. Used only when Scheme = "basic".</summary>
-        public string BasicUsername { get; set; }
-
-        /// <summary>Basic-auth password. Used only when Scheme = "basic".</summary>
-        public string BasicPassword { get; set; }
-
-        // ─── HMAC scheme ────────────────────────────────────
-        // Used only when Scheme = "hmac". The vendor signs the raw request body
-        // with a shared secret (HMAC-SHA256) and sends the digest in a header.
-        // We recompute and constant-time compare.
-
-        /// <summary>Shared secret used to compute the HMAC. Used only when Scheme = "hmac".</summary>
-        public string HmacSecret { get; set; }
-
-        /// <summary>Header the vendor sends the signature in. Default "X-Signature".</summary>
-        public string SignatureHeader { get; set; } = "X-Signature";
-
-        /// <summary>
-        /// Encoding of the signature value: "hex" (default) or "base64".
-        /// Some vendors prefix hex with "sha256=" — that prefix is tolerated on compare.
-        /// </summary>
-        public string SignatureEncoding { get; set; } = "hex";
-
-        /// <summary>
-        /// Optional IP allowlist for FK webhook origin. CIDR or plain IPs.
-        /// When non-empty, validator additionally checks request origin IP.
-        /// FK static IP range is O-004 — leave empty until confirmed.
-        /// </summary>
-        public List<string> AllowedSourceIps { get; set; }
     }
 
     /// <summary>Rate-limit settings — how aggressively we throttle ourselves.</summary>
