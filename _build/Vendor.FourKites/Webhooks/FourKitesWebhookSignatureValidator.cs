@@ -74,6 +74,8 @@ namespace Vendor.FourKites.Webhooks
                         return ValidateApiKey(headers, cfg.WebhookAuth);
                     case "basic":
                         return ValidateBasicAuth(headers, cfg.WebhookAuth);
+                    case "hmac":
+                        return ValidateHmac(headers, rawBody, cfg.WebhookAuth);
                     case "none":
                         return true;  // protection is at the network layer (IP allowlist)
                     default:
@@ -128,6 +130,54 @@ namespace Vendor.FourKites.Webhooks
 
             return ConstantTimeEquals(user, cfg.BasicUsername)
                 && ConstantTimeEquals(pass, cfg.BasicPassword);
+        }
+
+        private static bool ValidateHmac(IDictionary<string, string> headers, string rawBody, WebhookAuthConfig cfg)
+        {
+            if (string.IsNullOrEmpty(cfg.HmacSecret)) return false;
+            if (string.IsNullOrWhiteSpace(cfg.SignatureHeader)) return false;
+            if (rawBody == null) rawBody = string.Empty;
+
+            var provided = TryGetHeader(headers, cfg.SignatureHeader);
+            if (string.IsNullOrEmpty(provided)) return false;
+
+            // Tolerate a leading "sha256=" prefix (GitHub-style).
+            const string shaPrefix = "sha256=";
+            if (provided.StartsWith(shaPrefix, StringComparison.OrdinalIgnoreCase))
+                provided = provided.Substring(shaPrefix.Length);
+            provided = provided.Trim();
+
+            string computed;
+            try
+            {
+                byte[] key = Encoding.UTF8.GetBytes(cfg.HmacSecret);
+                byte[] body = Encoding.UTF8.GetBytes(rawBody);
+                byte[] hash;
+                using (var hmac = new System.Security.Cryptography.HMACSHA256(key))
+                {
+                    hash = hmac.ComputeHash(body);
+                }
+
+                var encoding = (cfg.SignatureEncoding ?? "hex").Trim().ToLowerInvariant();
+                if (encoding == "base64")
+                {
+                    computed = Convert.ToBase64String(hash);
+                }
+                else // "hex" (default)
+                {
+                    var sb = new StringBuilder(hash.Length * 2);
+                    for (int i = 0; i < hash.Length; i++)
+                        sb.Append(hash[i].ToString("x2"));
+                    computed = sb.ToString();
+                }
+            }
+            catch { return false; }
+
+            // hex compares case-insensitively; base64 is case-sensitive.
+            var enc = (cfg.SignatureEncoding ?? "hex").Trim().ToLowerInvariant();
+            if (enc == "base64")
+                return ConstantTimeEquals(provided, computed);
+            return ConstantTimeEquals(provided.ToLowerInvariant(), computed.ToLowerInvariant());
         }
 
         // ─── Helpers ──────────────────────────────────────────────────────
