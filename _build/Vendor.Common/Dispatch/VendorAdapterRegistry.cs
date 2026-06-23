@@ -35,6 +35,9 @@ namespace Vendor.Common.Dispatch
         private readonly Dictionary<string, IWebhookSignatureValidator> _validators
             = new Dictionary<string, IWebhookSignatureValidator>(StringComparer.OrdinalIgnoreCase);
 
+        private readonly Dictionary<string, IReadOnlyList<string>> _allowedSourceIps
+            = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>
         /// Eagerly loads all adapters declared in the &lt;vendorAdapters&gt; config section.
         /// Throws <see cref="VendorAdapterRegistryException"/> if any adapter type is
@@ -107,6 +110,17 @@ namespace Vendor.Common.Dispatch
             return _validators.TryGetValue(vendorName, out var v) ? v : null;
         }
 
+        /// <summary>
+        /// Returns the configured inbound source-IP allowlist for the given vendor, or null
+        /// if none is configured (null/empty =&gt; allow all, per IpAllowlist policy).
+        /// Populated from the allowedSourceIps attribute on the &lt;vendorAdapters&gt; element.
+        /// </summary>
+        public IReadOnlyList<string> GetAllowedSourceIps(string vendorName)
+        {
+            if (string.IsNullOrWhiteSpace(vendorName)) return null;
+            return _allowedSourceIps.TryGetValue(vendorName, out var ips) ? ips : null;
+        }
+
         /// <summary>Returns all registered vendor names. Useful for diagnostics.</summary>
         public IReadOnlyCollection<string> RegisteredVendorNames => _adapters.Keys;
 
@@ -158,6 +172,26 @@ namespace Vendor.Common.Dispatch
 
                 _validators[element.VendorName] = validator;
             }
+
+            // 4. Source-IP allowlist (optional). Parse comma/semicolon-separated
+            // IPs and CIDR ranges. Empty => no restriction (allow all).
+            var ipList = ParseAllowedIps(element.AllowedSourceIps);
+            if (ipList != null)
+                _allowedSourceIps[element.VendorName] = ipList;
+        }
+
+        private static IReadOnlyList<string> ParseAllowedIps(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+
+            var parts = raw.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+            var list = new List<string>();
+            foreach (var p in parts)
+            {
+                var t = p.Trim();
+                if (t.Length > 0) list.Add(t);
+            }
+            return list.Count > 0 ? list : null;
         }
 
         private static T Instantiate<T>(

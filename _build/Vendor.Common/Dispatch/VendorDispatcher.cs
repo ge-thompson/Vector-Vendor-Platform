@@ -55,11 +55,23 @@ namespace Vendor.Common.Dispatch
             }
         }
 
-        /// <summary>
-        /// True if the singleton has been configured. Callers can use this to
-        /// guard against early calls during startup without throwing.
-        /// </summary>
+        /// <summary>True if the singleton has been configured. Callers can use this to
+        /// guard against early calls during startup without throwing.</summary>
         public static bool IsConfigured => _instance != null;
+
+        /// <summary>
+        /// The vendor adapter registry built at Configure() time. Exposed so the inbound
+        /// webhook controller can resolve per-vendor validators and processors without
+        /// rebuilding the registry or re-reading config. Throws if not yet configured.
+        /// </summary>
+        public VendorAdapterRegistry Registry => _registry;
+
+        /// <summary>
+        /// The audit/vendor connection string supplied at Configure() time. Exposed so
+        /// inbound webhook persistence can reuse the same connection without a second
+        /// config lookup.
+        /// </summary>
+        public string AuditConnectionString => _auditConnectionString;
 
         /// <summary>
         /// Initializes the singleton from configuration. Idempotent — safe to call
@@ -105,7 +117,7 @@ namespace Vendor.Common.Dispatch
                 var resolver = new LoadShipperResolver(connectionString);
 
                 _instance = new VendorDispatcher(
-                    enabled, fireAndForget, registry, profileRepo, outboundRepo, resolver, errorHandler);
+                    enabled, fireAndForget, registry, profileRepo, outboundRepo, resolver, errorHandler, connectionString);
             }
         }
 
@@ -199,6 +211,7 @@ namespace Vendor.Common.Dispatch
         private readonly OutboundTransactionRepository _auditRepository;
         private readonly LoadShipperResolver _shipperResolver;
         private readonly Action<Exception> _onError;
+        private readonly string _auditConnectionString;
 
         private VendorDispatcher(
             bool enabled,
@@ -207,7 +220,8 @@ namespace Vendor.Common.Dispatch
             ClientProfileRepository profileRepository,
             OutboundTransactionRepository auditRepository,
             LoadShipperResolver shipperResolver,
-            Action<Exception> errorHandler)
+            Action<Exception> errorHandler,
+            string auditConnectionString = null)
         {
             _enabled = enabled;
             _fireAndForget = fireAndForget;
@@ -216,6 +230,7 @@ namespace Vendor.Common.Dispatch
             _auditRepository = auditRepository ?? throw new ArgumentNullException(nameof(auditRepository));
             _shipperResolver = shipperResolver ?? throw new ArgumentNullException(nameof(shipperResolver));
             _onError = errorHandler ?? (_ => { });
+            _auditConnectionString = auditConnectionString;
         }
 
         // ─── The public dispatch surface ─────────────────────────────────────

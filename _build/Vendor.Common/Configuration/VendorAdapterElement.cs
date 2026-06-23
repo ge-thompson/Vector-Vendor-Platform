@@ -64,5 +64,18 @@ namespace Vendor.Common.Configuration
             get => (string)this["webhookValidatorType"];
             set => this["webhookValidatorType"] = value;
         }
+
+        /// <summary>
+        /// Optional inbound source-IP allowlist for this vendor's webhooks. Comma- or
+        /// semicolon-separated list of plain IPs and/or CIDR ranges
+        /// (e.g. "203.0.113.7, 52.10.0.0/16"). Empty =&gt; no IP restriction (allow all).
+        /// Enforced by the generic webhook controller before authentication.
+        /// </summary>
+        [ConfigurationProperty("allowedSourceIps", IsRequired = false, DefaultValue = "")]
+        public string AllowedSourceIps
+        {
+            get => (string)this["allowedSourceIps"];
+            set => this["allowedSourceIps"] = value;
+        }
     }
 }
