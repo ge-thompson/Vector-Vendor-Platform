@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace OTR_API.Controllers
 {
-    [HMACAuthentication]
+    //[HMACAuthentication]
     [RoutePrefix("api/truckertools")]
     public class TruckerToolsTrackingController : ApiController
     {

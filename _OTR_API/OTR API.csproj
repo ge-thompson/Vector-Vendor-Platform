@@ -176,6 +176,7 @@
     <Compile Include="Controllers\TruckerToolsController.cs" />
     <Compile Include="Controllers\TruckerToolsTrackingController.cs" />
     <Compile Include="Controllers\VendorWebhookController.cs" />
+    <Compile Include="Controllers\VendorDispatchController.cs" />
     <Compile Include="Controllers\AdminController.cs" />
     <Compile Include="Controllers\UrlController.cs" />
     <Compile Include="DataClasses\DataAccessFBS.cs" />
