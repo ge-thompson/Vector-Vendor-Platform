@@ -41,6 +41,7 @@ namespace Vendor.Common.Configuration
         public bool AppointmentChanged { get; set; }
         public bool POD { get; set; }
         public bool TrackingStatus { get; set; }
+        public bool CancelLoad { get; set; }
         public bool Invoice { get; set; }
 
         // ─── Connection + credentials (inline, EDIProfiles style) ────────
@@ -78,6 +79,7 @@ namespace Vendor.Common.Configuration
                 case "appointmentchanged": return AppointmentChanged;
                 case "pod":                return POD;
                 case "trackingstatus":     return TrackingStatus;
+                case "cancelload":         return CancelLoad;
                 case "invoice":            return Invoice;
                 default:                   return false;
             }

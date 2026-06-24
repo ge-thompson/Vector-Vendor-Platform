@@ -43,6 +43,7 @@ namespace Vendor.Common.Persistence
                 case "appointmentchanged": return "AppointmentChanged";
                 case "pod":                return "POD";
                 case "trackingstatus":     return "TrackingStatus";
+                case "cancelload":         return "CancelLoad";
                 case "invoice":            return "Invoice";
                 default:                   return null;
             }
@@ -66,7 +67,7 @@ namespace Vendor.Common.Persistence
             // Column name comes from the whitelist above, never from user input — safe to inline.
             var sql =
                 "SELECT ID, CustomerID, Customer, Vendor, AdapterName, Active, " +
-                "LoadPosted, CheckCall, AppointmentChanged, POD, TrackingStatus, Invoice, " +
+                "LoadPosted, CheckCall, AppointmentChanged, POD, TrackingStatus, CancelLoad, Invoice, " +
                 "EndpointUrl, AuthType, ApiKey, HeaderName, Username, Password, Secret, " +
                 "SignatureHeader, SignatureEncoding, Instructions, Notes, CreatedDate, ModifiedDate " +
                 "FROM dbo.VVIProfiles " +
@@ -105,7 +106,7 @@ namespace Vendor.Common.Persistence
 
             const string sql =
                 "SELECT ID, CustomerID, Customer, Vendor, AdapterName, Active, " +
-                "LoadPosted, CheckCall, AppointmentChanged, POD, TrackingStatus, Invoice, " +
+                "LoadPosted, CheckCall, AppointmentChanged, POD, TrackingStatus, CancelLoad, Invoice, " +
                 "EndpointUrl, AuthType, ApiKey, HeaderName, Username, Password, Secret, " +
                 "SignatureHeader, SignatureEncoding, Instructions, Notes, CreatedDate, ModifiedDate " +
                 "FROM dbo.VVIProfiles " +
@@ -149,20 +150,21 @@ namespace Vendor.Common.Persistence
                 AppointmentChanged = GetBool(r, 8),
                 POD                = GetBool(r, 9),
                 TrackingStatus     = GetBool(r, 10),
-                Invoice            = GetBool(r, 11),
-                EndpointUrl        = GetStr(r, 12),
-                AuthType           = GetStr(r, 13),
-                ApiKey             = GetStr(r, 14),
-                HeaderName         = GetStr(r, 15),
-                Username           = GetStr(r, 16),
-                Password           = GetStr(r, 17),
-                Secret             = GetStr(r, 18),
-                SignatureHeader    = GetStr(r, 19),
-                SignatureEncoding  = GetStr(r, 20),
-                Instructions       = GetStr(r, 21),
-                Notes              = GetStr(r, 22),
-                CreatedDate        = GetDate(r, 23),
-                ModifiedDate       = GetDate(r, 24)
+                CancelLoad         = GetBool(r, 11),
+                Invoice            = GetBool(r, 12),
+                EndpointUrl        = GetStr(r, 13),
+                AuthType           = GetStr(r, 14),
+                ApiKey             = GetStr(r, 15),
+                HeaderName         = GetStr(r, 16),
+                Username           = GetStr(r, 17),
+                Password           = GetStr(r, 18),
+                Secret             = GetStr(r, 19),
+                SignatureHeader    = GetStr(r, 20),
+                SignatureEncoding  = GetStr(r, 21),
+                Instructions       = GetStr(r, 22),
+                Notes              = GetStr(r, 23),
+                CreatedDate        = GetDate(r, 24),
+                ModifiedDate       = GetDate(r, 25)
             };
         }
 
