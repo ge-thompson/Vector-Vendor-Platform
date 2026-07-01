@@ -35,7 +35,7 @@ namespace Vendor.FourKites
     ///   2. SELF-RATE-LIMIT — InMemoryRateLimiter blocks before HTTP if bucket empty
     ///   3. POPULATE AUDIT FIELDS — RequestPayloadJson + ResponseBodyJson set every time
     /// </summary>
-    public class FourKitesAdapter : IVendorAdapter, IDisposable
+    public class FourKitesAdapter : IVendorAdapter, IVendorLoadReader, IDisposable
     {
         public string VendorName => "FourKites";
 
@@ -171,6 +171,75 @@ namespace Vendor.FourKites
                 _onError(ex);
                 return VendorOperationResult.Failed(
                     "FK adapter unhandled error: " + ex.Message, "Permanent");
+            }
+        }
+
+        // ─── IVendorLoadReader — diagnostic GET path ───────────────────
+
+        /// <summary>
+        /// Fetches FK's current view of a load by VectorLoadId. Used by the diagnostic
+        /// /api/vendordispatch/load/{customerId}/{vectorLoadId} endpoint to confirm a load
+        /// exists in FK and to inspect its stops (identifiers, appointment times, etc.).
+        ///
+        /// Routes to GET /shipments/{loadNumber}?identifierType=loadNumber so callers don't
+        /// need to know FK's internal loadId. Shares the same apikey rate-limit bucket as
+        /// the write endpoints — the in-process rate limiter applies here too.
+        ///
+        /// NEVER THROWS. All failures (config, rate limit, HTTP, transient errors) come
+        /// back in the VendorLoadReadResult.
+        /// </summary>
+        public async Task<VendorLoadReadResult> GetLoadAsync(
+            string vectorLoadId,
+            ClientProfile profile,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (string.IsNullOrWhiteSpace(vectorLoadId))
+                return VendorLoadReadResult.Failed("vectorLoadId was null or empty", "Permanent");
+            if (profile == null)
+                return VendorLoadReadResult.Failed("ClientProfile was null", "Permanent");
+
+            FourKitesConfig cfg;
+            try
+            {
+                cfg = FourKitesConfig.ParseFrom(profile.ConfigJson);
+            }
+            catch (FourKitesConfigException ex)
+            {
+                _onError(ex);
+                return VendorLoadReadResult.Failed(
+                    "Bad ConfigJson for FourKites profile: " + ex.Message, "Permanent");
+            }
+
+            // Apply the same rate limiter as writes — FK GET shares the apikey bucket.
+            EnsureRateLimiter(cfg);
+            if (!_rateLimiter.TryAcquire())
+            {
+                return VendorLoadReadResult.Failed(
+                    $"Local rate limiter blocked GET (limit {cfg.RateLimit.RequestsPerSecond}/sec, burst {cfg.RateLimit.BurstSize})",
+                    "RateLimit");
+            }
+
+            var url = cfg.BaseUrl + cfg.ShipmentDetailsEndpoint(vectorLoadId);
+
+            try
+            {
+                var resp = await _client.GetJsonAsync(url, cfg.ApiKey, cancellationToken).ConfigureAwait(false);
+
+                if (resp.IsSuccess)
+                    return VendorLoadReadResult.Ok(resp.HttpStatusCode ?? 200, resp.ResponseBody, resp.Duration);
+
+                return VendorLoadReadResult.Failed(
+                    resp.ErrorMessage ?? "Unknown FK error",
+                    resp.ErrorCategory ?? "Unknown",
+                    resp.HttpStatusCode,
+                    resp.ResponseBody,
+                    resp.Duration);
+            }
+            catch (Exception ex)
+            {
+                _onError(ex);
+                return VendorLoadReadResult.Failed(
+                    "FK adapter unhandled GET error: " + ex.Message, "Permanent");
             }
         }
 

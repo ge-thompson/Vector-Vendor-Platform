@@ -88,6 +88,16 @@ namespace Vendor.FourKites
             string fullUrl, string apiKey, string jsonBody, CancellationToken cancellationToken)
             => SendJsonAsync(new HttpMethod("PATCH"), fullUrl, apiKey, jsonBody, cancellationToken);
 
+        /// <summary>
+        /// GET the given URL with the FK apikey header. No request body. NEVER THROWS.
+        /// Returns a FourKitesResponse whose ResponseBody carries the JSON FK returned.
+        /// Used by the diagnostic read path (IVendorLoadReader on FourKitesAdapter) and
+        /// any future fetch-merge-PATCH flow.
+        /// </summary>
+        public Task<FourKitesResponse> GetJsonAsync(
+            string fullUrl, string apiKey, CancellationToken cancellationToken)
+            => SendNoBodyAsync(HttpMethod.Get, fullUrl, apiKey, cancellationToken);
+
         // ─── Core send logic shared by POST + PATCH ─────────────────────
 
         private async Task<FourKitesResponse> SendJsonAsync(
@@ -171,6 +181,105 @@ namespace Vendor.FourKites
 
                         return FourKitesResponse.OfSuccess(
                             statusCode, body, vendorRequestId, vendorLoadId, sw.Elapsed);
+                    }
+
+                    var category = ClassifyStatusCode(statusCode);
+                    return FourKitesResponse.OfFailure(
+                        $"FK returned HTTP {statusCode}: {Truncate(body, 500)}",
+                        category,
+                        httpStatusCode: statusCode,
+                        responseBody: body,
+                        duration: sw.Elapsed);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                sw.Stop();
+                return FourKitesResponse.OfFailure("Cancelled", "Transient", duration: sw.Elapsed);
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                _onError(ex);
+                return FourKitesResponse.OfFailure(ex.Message, "Transient", duration: sw.Elapsed);
+            }
+        }
+
+        // ─── Core send logic for verbs with no body (GET) ───────────────
+
+        private async Task<FourKitesResponse> SendNoBodyAsync(
+            HttpMethod method,
+            string fullUrl,
+            string apiKey,
+            CancellationToken cancellationToken)
+        {
+            if (_disposed) return FourKitesResponse.OfFailure("Client disposed", "Permanent");
+
+            var sw = Stopwatch.StartNew();
+
+            try
+            {
+                var policyResult = await _retryPolicy.ExecuteAndCaptureAsync(
+                    async (ct) =>
+                    {
+                        using (var request = new HttpRequestMessage(method, fullUrl))
+                        {
+                            // FK's auth header — lowercase "apikey", raw key, no prefix.
+                            request.Headers.Add(FK_AUTH_HEADER, apiKey);
+                            // Accept the FK-versioned media type first (the GET shipment endpoint
+                            // documents application/vnd.fourkites.v1+json); fall back to JSON.
+                            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.fourkites.v1+json"));
+                            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                            return await _http.SendAsync(request, ct).ConfigureAwait(false);
+                        }
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                sw.Stop();
+
+                if (policyResult.Outcome == OutcomeType.Failure)
+                {
+                    var ex = policyResult.FinalException;
+                    if (ex == null)
+                    {
+                        return FourKitesResponse.OfFailure(
+                            "Polly outcome=Failure with no exception (unexpected)",
+                            "Transient", duration: sw.Elapsed);
+                    }
+
+                    _onError(ex);
+
+                    if (ex is OperationCanceledException)
+                        return FourKitesResponse.OfFailure("Cancelled before completion", "Transient", duration: sw.Elapsed);
+
+                    return FourKitesResponse.OfFailure(ex.Message, "Transient", duration: sw.Elapsed);
+                }
+
+                var httpResponse = policyResult.Result ?? policyResult.FinalHandledResult;
+                if (httpResponse == null)
+                {
+                    return FourKitesResponse.OfFailure(
+                        "Polly returned null result with no exception (unexpected)",
+                        "Unknown", duration: sw.Elapsed);
+                }
+
+                using (httpResponse)
+                {
+                    string body = "";
+                    try
+                    {
+                        if (httpResponse.Content != null)
+                            body = await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    }
+                    catch { /* body unreadable; carry on with the status code we have */ }
+
+                    var statusCode = (int)httpResponse.StatusCode;
+
+                    if (httpResponse.IsSuccessStatusCode)
+                    {
+                        // GET responses don't carry a requestId / loadId in our caller's sense —
+                        // they ARE the load. Body is returned to the caller for inspection.
+                        return FourKitesResponse.OfSuccess(statusCode, body, null, null, sw.Elapsed);
                     }
 
                     var category = ClassifyStatusCode(statusCode);

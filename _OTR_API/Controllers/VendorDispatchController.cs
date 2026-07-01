@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Web.Http;
 using Newtonsoft.Json;
 using OTR_API.Filters;
+using Vendor.Common.Abstractions;
 using Vendor.Common.Configuration;
 using Vendor.Common.Dispatch;
 using Vendor.Common.Events;
@@ -26,7 +27,7 @@ namespace OTR_API.Controllers
     /// DispatchStatus is the first wired path — sends a status / check call (location +
     /// status) to every vendor whose profile has CheckCall enabled for that customer.
     /// </summary>
-    //[HMACAuthentication]
+    [HMACAuthentication]
     [RoutePrefix("api/vendordispatch")]
     public class VendorDispatchController : ApiController
     {
@@ -37,6 +38,7 @@ namespace OTR_API.Controllers
         {
             public int CustomerID { get; set; }
             public string VectorLoadId { get; set; }
+            public string ShipmentNumber { get; set; }   // customer's load/shipment number
             public string Latitude { get; set; }
             public string Longitude { get; set; }
             public string City { get; set; }
@@ -50,6 +52,7 @@ namespace OTR_API.Controllers
         {
             public int CustomerID { get; set; }
             public string VectorLoadId { get; set; }
+            public string ShipmentNumber { get; set; }   // customer's load/shipment number
             public string Mode { get; set; }            // "TL", "LTL", etc. (optional)
             public string EquipmentType { get; set; }   // "Dry Van", etc. (optional)
             public decimal? Weight { get; set; }
@@ -63,20 +66,32 @@ namespace OTR_API.Controllers
         {
             public int CustomerID { get; set; }
             public string VectorLoadId { get; set; }
+            public string ShipmentNumber { get; set; }
             public string Reason { get; set; }           // optional free text
             public DateTime? OccurredUtc { get; set; }
         }
 
-        /// <summary>Appointment change for a stop.</summary>
+        /// <summary>Appointment change for a stop. Times are LOCAL wall-clock at the stop
+        /// (freight appointments are local to the stop's location; no timezone conversion).
+        /// Carries the full stop snapshot (address + sequence + type) so vendor adapters
+        /// have everything they need — adapters that only consume times can ignore the rest.</summary>
         public class VVIAppointmentRequest
         {
             public int CustomerID { get; set; }
             public string VectorLoadId { get; set; }
+            public string ShipmentNumber { get; set; }   // customer's load/shipment number
             public string StopExternalId { get; set; }       // which stop (optional)
-            public DateTime? ScheduledArrivalUtc { get; set; }
-            public DateTime? ScheduledDepartureUtc { get; set; }
+            public int? StopSequence { get; set; }            // 1-based stop sequence on the load
+            public string StopType { get; set; }              // "pickup" / "delivery" / "intermediate"
+            public DateTime? ScheduledArrival { get; set; }   // window open  (local wall-clock)
+            public DateTime? ScheduledDeparture { get; set; } // window close (local wall-clock)
+            public string AddressLine1 { get; set; }
             public string City { get; set; }
             public string State { get; set; }
+            public string PostalCode { get; set; }
+            public string Country { get; set; }               // ISO 2-char (e.g. "US")
+            public string Latitude { get; set; }
+            public string Longitude { get; set; }
             public DateTime? OccurredUtc { get; set; }
         }
 
@@ -133,6 +148,7 @@ namespace OTR_API.Controllers
             var evt = new LocationReportedEvent
             {
                 VectorLoadId = req.VectorLoadId,
+                ShipmentNumber = req.ShipmentNumber,
                 SourceSystem = "OTR_API",
                 OccurredUtc  = req.OccurredUtc ?? DateTime.UtcNow,
                 Latitude     = req.Latitude,
@@ -155,6 +171,7 @@ namespace OTR_API.Controllers
             var evt = new LoadCreatedEvent
             {
                 VectorLoadId  = req.VectorLoadId,
+                ShipmentNumber = req.ShipmentNumber,
                 SourceSystem  = "OTR_API",
                 OccurredUtc   = req.OccurredUtc ?? DateTime.UtcNow,
                 Mode          = req.Mode,
@@ -177,6 +194,7 @@ namespace OTR_API.Controllers
             var evt = new LoadTrackingStoppedEvent
             {
                 VectorLoadId = req.VectorLoadId,
+                ShipmentNumber = req.ShipmentNumber,  
                 SourceSystem = "OTR_API",
                 OccurredUtc  = req.OccurredUtc ?? DateTime.UtcNow,
                 Reason       = string.IsNullOrWhiteSpace(req.Reason) ? "CANCELLED" : req.Reason
@@ -198,6 +216,7 @@ namespace OTR_API.Controllers
             var evt = new LoadStatusEvent
             {
                 VectorLoadId  = req.VectorLoadId,
+                ShipmentNumber = req.ShipmentNumber,
                 SourceSystem  = "OTR_API",
                 OccurredUtc   = req.OccurredUtc ?? DateTime.UtcNow,
                 StatusType    = LoadStatusType.Other,
@@ -206,10 +225,17 @@ namespace OTR_API.Controllers
                 AtStop = new StopInfo
                 {
                     ExternalStopId        = req.StopExternalId,
+                    SequenceNumber        = req.StopSequence,
+                    Role                  = ParseStopRole(req.StopType),
+                    AddressLine1          = req.AddressLine1,
                     City                  = req.City,
                     State                 = req.State,
-                    ScheduledArrivalUtc   = req.ScheduledArrivalUtc,
-                    ScheduledDepartureUtc = req.ScheduledDepartureUtc
+                    PostalCode            = req.PostalCode,
+                    Country               = req.Country,
+                    Latitude              = req.Latitude,
+                    Longitude             = req.Longitude,
+                    ScheduledArrivalUtc   = req.ScheduledArrival,
+                    ScheduledDepartureUtc = req.ScheduledDeparture
                 }
             };
 
@@ -247,6 +273,130 @@ namespace OTR_API.Controllers
             };
 
             return Dispatch(req.CustomerID, "POD", evt, "Pod");
+        }
+
+        // ─── Diagnostic READ path ────────────────────────────────────
+
+        /// <summary>
+        /// GET the vendor's current view of a load. Diagnostic endpoint — fetches whatever
+        /// the vendor's GET endpoint hands back so ops/dev can verify the load exists, the
+        /// stops match what we expect, and identifiers resolve. Used to chase the
+        /// silent-no-op case where FK accepts a stopUpdate with 202 but applies nothing
+        /// because the load doesn't exist or the stop identifier doesn't match.
+        ///
+        /// Routes to every active VVI profile for the customer whose adapter implements
+        /// IVendorLoadReader. Other vendors (or adapters that don't support reads) are
+        /// reported as "supported: false" but don't fail the call.
+        ///
+        /// Reads are NOT audited in VendorOutboundTransactions — they don't change state
+        /// and would clutter the trail. Failures are still logged via DataAudit so an
+        /// operator can correlate a bad GET with an error in the OTR error log.
+        /// </summary>
+        // http://localhost:5129/api/vendordispatch/load/{customerId}/{vectorLoadId}
+        [HttpGet, Route("load/{customerId:int}/{vectorLoadId}")]
+        public async Task<HttpResponseMessage> GetVendorLoad(int customerId, string vectorLoadId)
+        {
+            var da = new OTR_API.DataClasses.DataAudit();
+
+            if (customerId <= 0 || string.IsNullOrWhiteSpace(vectorLoadId))
+            {
+                return Request.CreateResponse(HttpStatusCode.BadRequest,
+                    new { error = "customerId (>0) and vectorLoadId (non-empty) are required." });
+            }
+
+            if (!VendorDispatcher.IsConfigured)
+            {
+                da.InsertErrorAuditLog("VendorDispatcher not configured.", "VendorDispatch.GetLoad");
+                return Request.CreateResponse(HttpStatusCode.ServiceUnavailable,
+                    new { error = "VendorDispatcher not configured." });
+            }
+
+            var dispatcher = VendorDispatcher.Instance;
+            var registry   = dispatcher.Registry;
+            var connStr    = dispatcher.AuditConnectionString;
+
+            var repo = new VVIProfileRepository(connStr, ex => da.InsertErrorAuditLog(ex.ToString(), "VendorDispatch.GetLoad.ProfileRead"));
+
+            // We want any active profile for the customer; we don't care which event flag.
+            // Try the common ones in order — most active profiles will match one of these.
+            var profiles = repo.GetActiveProfiles(customerId, "CheckCall");
+            if (profiles.Count == 0) profiles = repo.GetActiveProfiles(customerId, "TrackingStatus");
+            if (profiles.Count == 0) profiles = repo.GetActiveProfiles(customerId, "LoadPosted");
+            if (profiles.Count == 0) profiles = repo.GetActiveProfiles(customerId, "AppointmentChanged");
+
+            if (profiles.Count == 0)
+            {
+                return Request.CreateResponse(HttpStatusCode.NotFound,
+                    new { error = "No active VVI profile found for customer " + customerId + "." });
+            }
+
+            var results = new List<object>();
+
+            foreach (var p in profiles)
+            {
+                var adapter = registry.GetAdapter(p.AdapterName);
+                if (adapter == null)
+                {
+                    results.Add(new {
+                        vendor = p.Vendor,
+                        supported = false,
+                        message = "No adapter registered for AdapterName '" + p.AdapterName + "'."
+                    });
+                    continue;
+                }
+
+                var reader = adapter as IVendorLoadReader;
+                if (reader == null)
+                {
+                    results.Add(new {
+                        vendor = p.Vendor,
+                        supported = false,
+                        message = "Adapter does not implement IVendorLoadReader (vendor doesn't expose a GET endpoint)."
+                    });
+                    continue;
+                }
+
+                VendorLoadReadResult readResult;
+                try
+                {
+                    var clientProfile = BuildClientProfile(p);
+                    readResult = await reader.GetLoadAsync(vectorLoadId, clientProfile, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // Defensive — adapters are contracted not to throw, but log+continue if one does.
+                    da.InsertErrorAuditLog(ex.ToString(), "VendorDispatch.GetLoad." + p.Vendor);
+                    results.Add(new {
+                        vendor = p.Vendor,
+                        supported = true,
+                        success = false,
+                        message = "Adapter threw: " + ex.Message
+                    });
+                    continue;
+                }
+
+                // Try to embed the body as a parsed JSON object so the response is readable;
+                // fall back to the raw string if it isn't valid JSON.
+                object body = readResult.ResponseBody;
+                if (!string.IsNullOrWhiteSpace(readResult.ResponseBody))
+                {
+                    try { body = Newtonsoft.Json.Linq.JToken.Parse(readResult.ResponseBody); }
+                    catch { /* leave as raw string */ }
+                }
+
+                results.Add(new {
+                    vendor         = p.Vendor,
+                    supported      = true,
+                    success        = readResult.Success,
+                    httpStatusCode = readResult.HttpStatusCode,
+                    message        = readResult.Success ? "OK" : readResult.ErrorMessage,
+                    errorCategory  = readResult.Success ? null : readResult.ErrorCategory,
+                    durationMs     = (int)readResult.Duration.TotalMilliseconds,
+                    body
+                });
+            }
+
+            return Request.CreateResponse(HttpStatusCode.OK, results);
         }
 
         // ─── Shared dispatch engine ──────────────────────────────────────────
@@ -347,6 +497,17 @@ namespace OTR_API.Controllers
             new OTR_API.DataClasses.DataAudit()
                 .InsertErrorAuditLog("Null or invalid request (CustomerID required).", "VendorDispatch." + source);
             return Task.FromResult(Request.CreateResponse(HttpStatusCode.BadRequest, new List<VVIDispatchResult>()));
+        }
+
+        /// <summary>Parse a stop-type string ("pickup" / "delivery" / "intermediate") into
+        /// a StopRole. Unknown / null values fall back to Intermediate so dispatch is never
+        /// blocked by a missing or unexpected stop type.</summary>
+        private static StopRole ParseStopRole(string stopType)
+        {
+            StopRole role;
+            if (string.IsNullOrWhiteSpace(stopType) || !Enum.TryParse(stopType, true, out role))
+                return StopRole.Intermediate;
+            return role;
         }
 
         private static List<StopInfo> MapStops(List<VVIStop> stops)

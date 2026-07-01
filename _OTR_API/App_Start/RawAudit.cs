@@ -29,9 +29,11 @@ namespace OTR_API
                 }
                 else
                 {
-                    var logMetadata = BuildRequestMetadata(request);
+                    //var logMetadata = BuildRequestMetadata(request);
+                    var logMetadata = await BuildRequestMetadata(request);
                     var response = await base.SendAsync(request, cancellationToken);
-                    logMetadata = BuildResponseMetadata(logMetadata, response);
+                    //logMetadata = BuildResponseMetadata(logMetadata, response);
+                    logMetadata = await BuildResponseMetadata(logMetadata, response);
                     await SendToLog(logMetadata);
                     return response;
                 }
@@ -43,9 +45,43 @@ namespace OTR_API
             }
 
         }
-        private LogMetadata BuildRequestMetadata(HttpRequestMessage request)
+       
+        //private LogMetadata BuildRequestMetadata(HttpRequestMessage request)
+        //{
+        //    if (request.RequestUri.ToString().Contains("UploadDriverFile") || request.RequestUri.ToString().Contains("UploadCheckCallFile") )
+        //    {
+        //        LogMetadata log = new LogMetadata
+        //        {
+        //            RequestMethod = request.Method.Method,
+        //            RequestTimestamp = DateTime.Now,
+        //            RequestUri = request.RequestUri.ToString()
+        //        };
+
+        //        if (request.Content.Headers.ContentType != null)
+        //            log.RequestContentType = request.Content.Headers.ContentType.MediaType;
+
+        //        return log;
+        //    }
+        //    else
+        //    {
+        //        LogMetadata log = new LogMetadata
+        //        {
+        //            RequestMethod = request.Method.Method,
+        //            RequestTimestamp = DateTime.Now,
+        //            RequestUri = request.RequestUri.ToString(),
+        //            RequestHeader = request.Headers.ToString().Replace(Environment.NewLine," | "),
+        //            RequestContent = request.Content.ReadAsStringAsync()
+        //        };
+
+        //        if (request.Content.Headers.ContentType != null)
+        //            log.RequestContentType = request.Content.Headers.ContentType.MediaType;
+
+        //        return log;
+        //    }
+        //}
+        private async Task<LogMetadata> BuildRequestMetadata(HttpRequestMessage request)
         {
-            if (request.RequestUri.ToString().Contains("UploadDriverFile") || request.RequestUri.ToString().Contains("UploadCheckCallFile") )
+            if (request.RequestUri.ToString().Contains("UploadDriverFile") || request.RequestUri.ToString().Contains("UploadCheckCallFile"))
             {
                 LogMetadata log = new LogMetadata
                 {
@@ -61,13 +97,17 @@ namespace OTR_API
             }
             else
             {
+                // Buffer so [FromBody] can still read the stream after we do
+                await request.Content.LoadIntoBufferAsync();
+                var bodyString = await request.Content.ReadAsStringAsync();
+
                 LogMetadata log = new LogMetadata
                 {
                     RequestMethod = request.Method.Method,
                     RequestTimestamp = DateTime.Now,
                     RequestUri = request.RequestUri.ToString(),
-                    RequestHeader = request.Headers.ToString().Replace(Environment.NewLine," | "),
-                    RequestContent = request.Content.ReadAsStringAsync()
+                    RequestHeader = request.Headers.ToString().Replace(Environment.NewLine, " | "),
+                    RequestContent = bodyString
                 };
 
                 if (request.Content.Headers.ContentType != null)
@@ -76,18 +116,35 @@ namespace OTR_API
                 return log;
             }
         }
-        private LogMetadata BuildResponseMetadata(LogMetadata logMetadata, HttpResponseMessage response)
+
+        //private LogMetadata BuildResponseMetadata(LogMetadata logMetadata, HttpResponseMessage response)
+        //{
+        //    logMetadata.ResponseStatusCode = response.StatusCode;
+        //    logMetadata.ResponseTimestamp = DateTime.Now;
+        //    if(response.Content != null)
+        //    {
+        //        logMetadata.ResponseContentType = response.Content.Headers.ContentType.MediaType;
+        //        logMetadata.ResponseContent = response.Content.ReadAsStringAsync();
+        //    }
+
+        //    return logMetadata;
+        //}
+        private async Task<LogMetadata> BuildResponseMetadata(LogMetadata logMetadata, HttpResponseMessage response)
         {
             logMetadata.ResponseStatusCode = response.StatusCode;
             logMetadata.ResponseTimestamp = DateTime.Now;
-            if(response.Content != null)
+            if (response.Content != null)
             {
-                logMetadata.ResponseContentType = response.Content.Headers.ContentType.MediaType;
-                logMetadata.ResponseContent = response.Content.ReadAsStringAsync();
+                if (response.Content.Headers.ContentType != null)
+                    logMetadata.ResponseContentType = response.Content.Headers.ContentType.MediaType;
+
+                await response.Content.LoadIntoBufferAsync();
+                logMetadata.ResponseContent = await response.Content.ReadAsStringAsync();
             }
 
             return logMetadata;
         }
+
         private async Task<bool> SendToLog(LogMetadata logMetadata)
         {
 
@@ -138,11 +195,13 @@ namespace OTR_API
         public string RequestUri { get; set; }
         public string RequestMethod { get; set; }
         public string RequestHeader { get; set; }
-        public Task<string> RequestContent { get; set; }
+        //public Task<string> RequestContent { get; set; }
+        public string RequestContent { get; set; }
         public DateTime? RequestTimestamp { get; set; }
         public string ResponseContentType { get; set; }
         public HttpStatusCode ResponseStatusCode { get; set; }
         public DateTime? ResponseTimestamp { get; set; }
-        public Task<string> ResponseContent { get; set; }
+        //public Task<string> ResponseContent { get; set; }
+        public string ResponseContent { get; set; }
     }
 }

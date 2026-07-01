@@ -22,6 +22,15 @@ namespace Vendor.Common.Events
         public string VectorLoadId { get; set; }
 
         /// <summary>
+        /// The customer's / shipper's own load or shipment number (sourced from
+        /// LoadHeader.MasterBOL in FBS). This is the identifier the shipper and downstream
+        /// vendor recognize the load by — distinct from VectorLoadId. Carried on every event
+        /// so adapters can key the load on the customer's number where the vendor expects it.
+        /// May be empty if not provided.
+        /// </summary>
+        public string ShipmentNumber { get; set; }
+
+        /// <summary>
         /// UTC timestamp of when the event occurred. Defaults to dispatch time.
         /// Callers may set this explicitly if they're dispatching a historical event.
         /// </summary>

@@ -200,6 +200,13 @@ namespace Vendor.FourKites.Mapping
         {
             var requestId = Guid.NewGuid().ToString();
 
+            // ─── ORIGINAL: always-eventUpdate path (preserved for reference) ─────
+            // The original implementation always built an eventUpdate sub-object regardless
+            // of whether the LoadStatusEvent carried a milestone (X1/AF/X3/...) or an
+            // appointment change. For appointment changes that approach loses the actual
+            // new times since eventUpdate has no slots for earliestAppointmentTime /
+            // latestAppointmentTime — those live on stopUpdate (Part 1.4 of FK spec).
+            /*
             // Use the same status mapper that drives LoadStatusEvent codes — the FK template
             // maps LoadStatusType to EDI 214 codes (X1/AF/X3/CD/D1/OA/X9). Keep it.
             var statusCode = LoadStatusMapper.MapFromEvent(evt);
@@ -219,19 +226,127 @@ namespace Vendor.FourKites.Mapping
 
             var body = BuildDispatcherEnvelope(evt.VectorLoadId, cfg, locationUpdate: null, eventUpdate: eventUpdate);
             return new BuildResult { Json = body.ToString(Formatting.None), RequestId = requestId };
+            */
+
+            // ─── NEW: branch by event semantic ──────────────────────────────────
+            // Appointment changes (SourceStatusDescription == "AppointmentChanged") route to
+            // stopUpdate (sibling of loadUpdate) carrying the new earliestAppointmentTime /
+            // latestAppointmentTime. Address fields on AtStop are NOT sendable via the
+            // Dispatcher API — they would require the Manage Loads PATCH endpoint (license).
+            // They still flow through OTR's audit row for visibility.
+            // Everything else continues to route to eventUpdate inside loadUpdate[].
+            bool isAppointmentChange =
+                string.Equals(evt.SourceStatusDescription, "AppointmentChanged",
+                              StringComparison.OrdinalIgnoreCase);
+
+            if (isAppointmentChange && evt.AtStop != null)
+            {
+                var stopUpdate = BuildStopUpdateFromStop(evt.AtStop);
+                var apptBody = BuildDispatcherEnvelope(
+                    evt.VectorLoadId, cfg,
+                    locationUpdate: null, eventUpdate: null, stopUpdate: stopUpdate);
+                return new BuildResult { Json = apptBody.ToString(Formatting.None), RequestId = requestId };
+            }
+
+            // Default: status milestone → eventUpdate (existing behavior, unchanged)
+            var statusCode = LoadStatusMapper.MapFromEvent(evt);
+
+            var milestoneEventUpdate = new JObject
+            {
+                ["statusCode"]     = statusCode,
+                ["eventTimeStamp"] = ToFkUtcIso(evt.StatusTimeUtc)
+            };
+            if (!string.IsNullOrWhiteSpace(evt.SourceStatusDescription))
+                milestoneEventUpdate["statusDescription"] = evt.SourceStatusDescription;
+            if (!string.IsNullOrWhiteSpace(evt.SourceStatusCode))
+                milestoneEventUpdate["statusReasonCode"] = evt.SourceStatusCode;
+            // "delivered" flag: only set true when the status is Delivered so FK can flip the load
+            if (evt.StatusType == LoadStatusType.Delivered)
+                milestoneEventUpdate["delivered"] = true;
+
+            var statusBody = BuildDispatcherEnvelope(
+                evt.VectorLoadId, cfg,
+                locationUpdate: null, eventUpdate: milestoneEventUpdate, stopUpdate: null);
+            return new BuildResult { Json = statusBody.ToString(Formatting.None), RequestId = requestId };
+        }
+
+        /// <summary>
+        /// Build a stopUpdate sub-object for the Dispatcher API from a StopInfo populated
+        /// by an appointment-change event. Per FK spec (Part 1.4), stopUpdate carries the
+        /// appointment times (earliestAppointmentTime / latestAppointmentTime) and
+        /// identifies the stop via ONE of stopSequence, stopReferenceId, or postalCode.
+        ///
+        /// Identifier preference: stopReferenceId (most durable) > stopSequence > postalCode.
+        /// If none are present FK will reject the update — but the audit row still captures
+        /// the bad payload for diagnosis.
+        ///
+        /// NOTE: stopUpdate has NO fields for address changes (addressLine1/city/state/lat/long).
+        /// Those require the Manage Loads PATCH /api/v1/tracking/{id}?simpleUpdate=true
+        /// endpoint, which is gated on the Core Track / Appointment Manager license. Address
+        /// fields on AtStop still flow into OTR's audit row for visibility — they're just not
+        /// sent on the wire to FK from this path.
+        /// </summary>
+        private static JObject BuildStopUpdateFromStop(StopInfo stop)
+        {
+            var su = new JObject();
+
+            // ─── Identifier (at least ONE is required per FK spec) ───
+            bool hasIdentifier = false;
+            if (!string.IsNullOrWhiteSpace(stop.ExternalStopId))
+            {
+                su["stopReferenceId"] = stop.ExternalStopId;
+                hasIdentifier = true;
+            }
+            if (stop.SequenceNumber.HasValue && stop.SequenceNumber.Value > 0)
+            {
+                su["stopSequence"] = stop.SequenceNumber.Value.ToString();
+                hasIdentifier = true;
+            }
+            if (!hasIdentifier && !string.IsNullOrWhiteSpace(stop.PostalCode))
+            {
+                su["postalCode"] = stop.PostalCode;
+            }
+
+            // ─── Stop type (optional but informative — pickup/delivery) ───
+            var stopTypeStr = MapStopType(stop.Role);
+            if (!string.IsNullOrWhiteSpace(stopTypeStr))
+                su["stopType"] = stopTypeStr;
+
+            // ─── Appointment window — the actual point of this update ───
+            // ISO 8601 with Z suffix. The envelope sets timeZone="UTC" so FK interprets
+            // these as UTC instants. Future fix: if StopInfo gains a timezone, convert
+            // here to the stop's local wall-clock and drop the envelope timeZone.
+            if (stop.ScheduledArrivalUtc.HasValue)
+                su["earliestAppointmentTime"] = ToFkUtcIso(stop.ScheduledArrivalUtc.Value);
+            if (stop.ScheduledDepartureUtc.HasValue)
+                su["latestAppointmentTime"] = ToFkUtcIso(stop.ScheduledDepartureUtc.Value);
+            // If only arrival is set, mirror it — FK collapses earliest==latest to a single time.
+            if (stop.ScheduledArrivalUtc.HasValue && !stop.ScheduledDepartureUtc.HasValue)
+                su["latestAppointmentTime"] = ToFkUtcIso(stop.ScheduledArrivalUtc.Value);
+
+            return su;
         }
 
         /// <summary>
         /// Shared envelope builder for the Dispatcher Update endpoint. Produces:
-        ///   { "updates": [{ "billToCode": ..., "identifierKeys": [...], "loadUpdate": [{ ... }] }] }
-        /// Caller passes in whichever sub-object(s) apply (locationUpdate, eventUpdate, or both).
+        ///   { "updates": [{ "billToCode": ..., "identifierKeys": [...],
+        ///                    "stopUpdate": { ... },               // optional, sibling of loadUpdate
+        ///                    "loadUpdate": [{ ... }] }] }
+        /// Caller passes in whichever sub-object(s) apply (locationUpdate, eventUpdate, stopUpdate).
+        ///
+        /// CRITICAL: stopUpdate sits at update[].stopUpdate — a SIBLING of loadUpdate, NOT
+        /// inside loadUpdate[]. Putting it inside loadUpdate[] is silently wrong (FK accepts
+        /// the payload but never applies the appointment change).
         /// </summary>
         private static JObject BuildDispatcherEnvelope(
             string vectorLoadId,
             FourKitesConfig cfg,
             JObject locationUpdate,
-            JObject eventUpdate)
+            JObject eventUpdate,
+            JObject stopUpdate = null)
         {
+            // ─── ORIGINAL envelope (loadUpdate-only — no stopUpdate slot) ─────────
+            /*
             // Identify the load by Vector's loadNumber. billToCode scopes the match to
             // the right shipper. FK matches on identifierKeys[0] first, then [1], etc.
             var identifierKey = new JObject
@@ -251,6 +366,41 @@ namespace Vendor.FourKites.Mapping
                 ["identifierKeys"] = new JArray(identifierKey),
                 ["loadUpdate"]     = new JArray(loadUpdate)
             };
+
+            return new JObject
+            {
+                ["updates"] = new JArray(update)
+            };
+            */
+
+            // ─── NEW envelope — adds stopUpdate at the sibling level ─────────────
+            var identifierKey = new JObject
+            {
+                ["identifier"]     = vectorLoadId,
+                ["identifierType"] = "loadNumber"
+            };
+
+            var update = new JObject
+            {
+                ["timeZone"]       = "UTC",
+                ["billToCode"]     = cfg.BillToCode,
+                ["identifierKeys"] = new JArray(identifierKey)
+            };
+
+            // stopUpdate is a SIBLING of loadUpdate at update[].* — appointment-only path.
+            if (stopUpdate != null)
+                update["stopUpdate"] = stopUpdate;
+
+            // loadUpdate carries locationUpdate and/or eventUpdate when present.
+            // Omit the loadUpdate array entirely if neither is supplied so a stopUpdate-only
+            // payload doesn't ship an empty loadUpdate that confuses FK.
+            if (locationUpdate != null || eventUpdate != null)
+            {
+                var loadUpdate = new JObject();
+                if (locationUpdate != null) loadUpdate["locationUpdate"] = locationUpdate;
+                if (eventUpdate    != null) loadUpdate["eventUpdate"]    = eventUpdate;
+                update["loadUpdate"] = new JArray(loadUpdate);
+            }
 
             return new JObject
             {

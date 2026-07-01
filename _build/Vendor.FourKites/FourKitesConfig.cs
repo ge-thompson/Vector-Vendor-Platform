@@ -141,6 +141,18 @@ namespace Vendor.FourKites
         /// </summary>
         [JsonIgnore] public string DispatcherUpdateEndpoint => "/load/update/dispatcher-api/async";
 
+        /// <summary>
+        /// Shipment details GET endpoint (per docs.fourkites.com/api-reference/get-shipment-details).
+        /// Supports lookup by FK loadId OR by carrier loadNumber via ?identifierType=loadNumber.
+        /// We use the loadNumber variant so callers don't need to know FK's internal loadId
+        /// (i.e. no LoadCrossReference lookup required for reads).
+        ///
+        /// Rate limit: 1 request per second per the FK spec. Shares the apikey bucket with
+        /// the write endpoints, so the adapter's in-process rate limiter still applies.
+        /// </summary>
+        public string ShipmentDetailsEndpoint(string vectorLoadId)
+            => "/shipments/" + Uri.EscapeDataString(vectorLoadId ?? "") + "?identifierType=loadNumber";
+
         // ─── Environment URL table ──────────────────────────────────────
 
         // Per FK docs/api-reference Create Shipment Request panel.

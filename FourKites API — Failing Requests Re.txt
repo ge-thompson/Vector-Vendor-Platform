@@ -1,0 +1,309 @@
+FourKites API — Failing Requests Reference
+
+**Account:** Vector Transport
+**billToCode:** 2215324
+**SCAC:** VECR
+**Environment:** Production ('https://api.fourkites.com')
+**Date of tests:** 2026-06-30
+
+---
+
+Baseline
+
+**What works today:**
+
+- 'GET /shipments/{loadNumber}?identifierType=loadNumber' — returns full load detail
+- 'POST /api/v1/tracking' (Load Create) — created 'TEST-999002' successfully (FK loadId '684658947')
+- Dispatcher API 'locationUpdate' — verified during Phase 1 rollout
+
+**What does not work:**
+
+- 'POST /load/update/dispatcher-api/async' with 'stopUpdate' sub-object — always returns 'HTTP 202 "API Request Accepted"', but no state change on the load
+- 'PATCH /api/v1/tracking/{loadId}?simpleUpdate=true' — always returns 'HTTP 400' with generic validation errors, regardless of payload contents
+
+---
+
+
+
+Example 1 — stopUpdate on demo load 12345667 (postalCode identifier)
+
+Request
+
+'''http
+POST https://api.fourkites.com/load/update/dispatcher-api/async
+apikey: OFX6BL85E0SC9W9SDHIEWTTPRFH8U
+Content-Type: application/json
+'''
+
+'''json
+{
+  "updates": [{
+    "timeZone": "UTC",
+    "billToCode": "2215324",
+    "identifierKeys": [
+      {"identifier": "12345667", "identifierType": "loadNumber"}
+    ],
+    "stopUpdate": {
+      "postalCode": "10007",
+      "stopType": "pickup",
+      "earliestAppointmentTime": "2026-07-15T14:00:00Z",
+      "latestAppointmentTime": "2026-07-15T16:00:00Z"
+    }
+  }]
+}
+'''
+
+Response — HTTP 202
+
+'''json
+{
+  "requestId": "cfaf7957-0f09-4b79-b4a4-5b7a54cd146f",
+  "status": "202",
+  "message": "API Request Accepted",
+  "timestamp": "2026-06-30T18:36:47.625128"
+}
+'''
+
+Result
+
+Subsequent 'GET /shipments/12345667?identifierType=loadNumber' shows stop 1's 'schedule' unchanged. The new appointment times were not applied.
+
+---
+
+
+
+Example 2 — stopUpdate on demo load 12345667 (stopSequence identifier)
+
+Request
+
+'''http
+POST https://api.fourkites.com/load/update/dispatcher-api/async
+apikey: OFX6BL85E0SC9W9SDHIEWTTPRFH8U
+Content-Type: application/json
+'''
+
+'''json
+{
+  "updates": [{
+    "timeZone": "UTC",
+    "billToCode": "2215324",
+    "identifierKeys": [
+      {"identifier": "12345667", "identifierType": "loadNumber"}
+    ],
+    "stopUpdate": {
+      "stopSequence": "1",
+      "stopType": "pickup",
+      "earliestAppointmentTime": "2026-07-15T14:00:00Z",
+      "latestAppointmentTime": "2026-07-15T16:00:00Z"
+    }
+  }]
+}
+'''
+
+Response — HTTP 202
+
+'''json
+{
+  "requestId": "75e3fcd2-cf9f-4fc0-940a-d7f5c6a65ee7",
+  "status": "202",
+  "message": "API Request Accepted",
+  "timestamp": "2026-06-30T18:44:22.453785"
+}
+'''
+
+Result
+
+Same as Example 1 — 202 accepted, stop's schedule unchanged on the subsequent GET.
+
+---
+
+
+
+Example 3 — stopUpdate on Vector-owned load TEST-999002 *(the critical test)*
+
+Load created via 'POST /api/v1/tracking' earlier the same day (FK loadId '684658947'). Subsequent GET confirms:
+
+- Both stops have 'sequence: 1' and 'sequence: 2' populated
+- 'SCAC: "VECR"' (Vector's SCAC)
+- 'shipper: "Vector Transport"'
+
+The load is fully Vector-owned and correctly created. This test rules out demo-load-specific behavior and identifier-mismatch as possible causes.
+
+Request
+
+'''http
+POST https://api.fourkites.com/load/update/dispatcher-api/async
+apikey: OFX6BL85E0SC9W9SDHIEWTTPRFH8U
+Content-Type: application/json
+'''
+
+'''json
+{
+  "updates": [{
+    "timeZone": "UTC",
+    "billToCode": "2215324",
+    "identifierKeys": [
+      {"identifier": "TEST-999002", "identifierType": "loadNumber"}
+    ],
+    "stopUpdate": {
+      "stopSequence": "1",
+      "stopType": "pickup",
+      "earliestAppointmentTime": "2026-07-22T10:00:00Z",
+      "latestAppointmentTime": "2026-07-22T12:00:00Z"
+    }
+  }]
+}
+'''
+
+Response — HTTP 202
+
+'''json
+{
+  "requestId": "14473740-232d-4edb-b35a-fb76488dc4ec",
+  "status": "202",
+  "message": "API Request Accepted",
+  "timestamp": "2026-06-30T19:19:31.077415"
+}
+'''
+
+Result
+
+'GET /shipments/TEST-999002?identifierType=loadNumber' afterward shows stop 1's 'appointmentTime' still '2026-07-15T21:00:00+00:00' (the original Create-time value). **The July 22 update did not apply.**
+
+**Why this test is decisive:** 'stopSequence: 1' exactly matches what FK stored ('data.stops[0].sequence: 1' in the GET response). Identifier resolution cannot be the cause. The load is Vector-owned, so this is not a demo-load restriction. The 202 ack does not reflect actual processing.
+
+---
+
+
+
+Example 4 — Manage Loads PATCH on demo load 12345667
+
+Request
+
+'''http
+PATCH https://api.fourkites.com/api/v1/tracking/682649244?simpleUpdate=true
+apikey: OFX6BL85E0SC9W9SDHIEWTTPRFH8U
+Content-Type: application/json
+'''
+
+'''json
+{
+  "load": {
+    "loadNumber": "12345667",
+    "stops": [{
+      "stopType": "PICKUP",
+      "sequence": 1,
+      "name": "Test Pickup",
+      "addressLine1": "1 Test St",
+      "city": "New York",
+      "state": "NY",
+      "postalCode": "10007",
+      "country": "US",
+      "earliestAppointmentTime": "2026-07-15T14:00:00",
+      "latestAppointmentTime": "2026-07-15T16:00:00"
+    }]
+  }
+}
+'''
+
+Response — HTTP 400
+
+'''json
+{
+  "errors": [
+    "Stops stop type can't be blank",
+    "Stops stop type is not included in the list",
+    "Stops address should contain Address line 1 or city, state and country or External address id or Latitude and Longitude"
+  ],
+  "message": "",
+  "requestId": "d920v4q1d6ml5mt04tfg",
+  "statusCode": 400
+}
+'''
+
+Result
+
+All three "missing" fields are populated in the request:
+
+- 'stopType: "PICKUP"' matches the uppercase values FK returns on GET
+- 'addressLine1', 'city', 'state', 'country' are all present
+
+Validator behavior does not appear to match the actual payload contents.
+
+---
+
+
+
+Example 5 — Manage Loads PATCH using FK's own GET response verbatim
+
+To rule out payload-shape mistakes, we copied a stop object directly from an FK 'GET /shipments' response for a different load and used it as the input.
+
+Request
+
+'''http
+PATCH https://api.fourkites.com/api/v1/tracking/682649244?simpleUpdate=true
+apikey: OFX6BL85E0SC9W9SDHIEWTTPRFH8U
+Content-Type: application/json
+'''
+
+'''json
+{
+  "load": {
+    "loadNumber": "12345667",
+    "stops": [{
+      "fourKitesStopID": "1824150897",
+      "stopReferenceId": "18161",
+      "stopType": "PICKUP",
+      "status": "Not Tracking",
+      "stopName": "CHIPPEWA FALLS PLANT",
+      "city": "Chippewa Falls",
+      "state": "WI",
+      "country": "US",
+      "latitude": 44.9305431,
+      "longitude": -91.3783529,
+      "timeZone": "America/Chicago",
+      "schedule": {
+        "appointmentTime": "1900-01-01T06:00:00+00:00",
+        "appointmentWindowStart": "1900-01-01T06:00:00+00:00",
+        "appointmentWindowEnd": "1900-01-01T06:00:00+00:00"
+      },
+      "sequence": 1,
+      "postalCode": "54729",
+      "address": "600 East Park Avenue, Chippewa Falls, WI - 54729, US"
+    }]
+  }
+}
+'''
+
+Response — HTTP 400
+
+'''json
+{
+  "errors": [
+    "Stops stop type can't be blank",
+    "Stops stop type is not included in the list",
+    "Stops address should contain Address line 1 or city, state and country or External address id or Latitude and Longitude"
+  ],
+  "message": "",
+  "requestId": "d9211ni1d6ml5mt06ahg",
+  "statusCode": 400
+}
+'''
+
+Result
+
+Same three validation errors on a payload derived directly from FK's own output. Suggests validator behavior is not driven by the payload contents in the way the errors describe.
+
+---
+
+
+Questions
+
+1. **stopUpdate silent no-op** — HTTP 202 accepted, no state change. Same behavior across three loads, three identifier types (postalCode, stopSequence, stopReferenceId), and two API keys. Is this documented behavior, an entitlement gate, or a bug?
+
+2. **PATCH validation errors that don't match payload contents** — same three generic errors regardless of what is sent, including on a payload copied from FK's own GET response. Is Manage Loads & Appointments enabled on our account, and if so, what is the correct request shape that will pass validation?
+
+3. **"View only" indicator** on 'TEST-999002' (Vector-owned, API-created) in the FK web app — does this correlate with API write entitlement, or is it a UI-only affordance for loads created via the API?
+
+4. **Recommended path** for an EDI 214 appointment change flowing from a shipper TMS into FK — Dispatcher API 'stopUpdate' or Manage Loads PATCH? We would like to align on the intended path before further build.
+
