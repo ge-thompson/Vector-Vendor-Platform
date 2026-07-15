@@ -284,22 +284,37 @@ namespace Vendor.Common.Dispatch
         {
             try
             {
-                // 1. Resolve shipper from the load id (Phase 1 always returns VECTOR_DEFAULT)
-                var shipperCode = _shipperResolver.Resolve(evt.VectorLoadId);
-
-                // 2. Find matching profiles via the cache
+                // 1. Route via VVIProfiles. Customer scope (evt.BillToID) + per-event flag
+                //    determine which vendor adapters receive this event. The repository joins
+                //    to ClientProfiles for the vendor connection config each adapter needs.
+                //    Events with BillToID = 0 return zero matches (no unscoped leaks).
                 var eventTypeName = evt.GetType().Name;
-                var matches = _profileRepository.FindRouting(shipperCode, eventTypeName);
+                bool customerHasAnyActiveProfile;
+                var matches = _profileRepository.FindRoutingByCustomer(evt, out customerHasAnyActiveProfile);
 
                 if (matches.Count == 0)
                 {
-                    // No vendor wants this event. Audit as SKIPPED for visibility.
+                    // Silent path — customer has no VVI setup at all (the 99.99% of TT
+                    // customers not on VVI). Auditing every one of these would flood the
+                    // outbound table; skip the audit and return.
+                    if (!customerHasAnyActiveProfile)
+                        return;
+
+                    // Customer IS a VVI customer but this event's flag is off on all their
+                    // active profiles. That IS meaningful — someone may have forgotten to
+                    // flip a flag. Audit as SKIPPED for visibility.
+                    string reason = evt.BillToID <= 0
+                        ? $"Event has no BillToID (customer scope) — dispatch skipped to prevent cross-customer leak. EventType='{eventTypeName}'."
+                        : $"No Customer Profile: CustomerID={evt.BillToID} has an active VVIProfile but the flag for EventType='{eventTypeName}' is off.";
                     await _auditRepository.InsertSkippedAsync(evt,
                         vendorName: "(none)",
-                        reason: $"No active profile matches ShipperCode='{shipperCode}', EventType='{eventTypeName}'.",
+                        reason: reason,
                         ct: ct).ConfigureAwait(false);
                     return;
                 }
+
+                // Retain shipperCode for the audit trail on per-vendor dispatches.
+                var shipperCode = _shipperResolver.Resolve(evt.VectorLoadId);
 
                 // 3. For each matched profile, look up adapter and dispatch in parallel
                 var tasks = new Task[matches.Count];

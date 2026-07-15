@@ -44,11 +44,13 @@ namespace OTR_API.DataClasses
                 { "arrived_pickup",     LoadStatusType.ArrivedAtPickup },
                 { "at_pickup",          LoadStatusType.ArrivedAtPickup },
                 { "x1",                 LoadStatusType.ArrivedAtPickup },
+                { "pe",                 LoadStatusType.ArrivedAtPickup },   // TT: Entered pickup geofence
 
                 { "departed_pickup",    LoadStatusType.DepartedPickup },
                 { "picked_up",          LoadStatusType.DepartedPickup },
                 { "loaded",             LoadStatusType.DepartedPickup },
                 { "af",                 LoadStatusType.DepartedPickup },
+                { "px",                 LoadStatusType.DepartedPickup },   // TT: Left pickup geofence
 
                 // In-transit
                 { "in_transit",         LoadStatusType.InTransit },
@@ -60,9 +62,11 @@ namespace OTR_API.DataClasses
                 { "arrived_delivery",   LoadStatusType.ArrivedAtDelivery },
                 { "at_delivery",        LoadStatusType.ArrivedAtDelivery },
                 { "x3",                 LoadStatusType.ArrivedAtDelivery },
+                { "de",                 LoadStatusType.ArrivedAtDelivery },   // TT: Entered delivery geofence
 
                 { "departed_delivery",  LoadStatusType.DepartedDelivery },
                 { "cd",                 LoadStatusType.DepartedDelivery },
+                { "dx",                 LoadStatusType.DepartedDelivery },   // TT: Left delivery geofence
 
                 { "delivered",          LoadStatusType.Delivered },
                 { "completed",          LoadStatusType.Delivered },
@@ -130,5 +134,98 @@ namespace OTR_API.DataClasses
         /// Useful for admin/diagnostic pages that show "what does this code map to by default."
         /// </summary>
         public static IReadOnlyDictionary<string, LoadStatusType> GetHardcodedDefaults() => CodeToType;
+
+        // ─── Filtered dispatch resolver ───────────────────────────
+        //
+        // The Map() method above is a raw code → type lookup, kept for callers that
+        // still want the un-filtered behavior. Resolve() below is the OTR dispatch
+        // policy: it decides whether a TT signal should be sent to VVI vendors at
+        // all, and whether an auto-follow "En Route" (AG) event should trail the
+        // primary event.
+        //
+        // Decisions (locked with operations, see mapping doc):
+        //   PE  → X3 (Arrived at Pickup),   no follow-up
+        //   PX  → AF (Departed Pickup),     follow-up AG (driver is now en route)
+        //   DE  → X1 (Arrived at Delivery), no follow-up
+        //   DX  → CD (Departed Delivery),   no follow-up (may be final delivery; FBS owns D1)
+        //   SX  → no primary,               follow-up AG (intermediate stop departure)
+        //   AC  → parse description: "Checked Arrive/Depart at Pickup/Delivery"
+        //          → X3 / AF / X1 / CD; AF also follows with AG
+        //          "Unchecked ..." → filter (broker undoing an entry; vendor already saw the original)
+        //   Everything else → filter (device warnings, TT lifecycle noise, RL/PD until
+        //                              FBS is aware of exceptions and dedup is in place).
+        //
+        // OA (Dispatched) and D1 (Delivered) originate from FBS, not from TT signals.
+        // A3 (Exceptions from RL / PD) will land here once FBS routes them via VVI.
+
+        /// <summary>
+        /// Full mapping decision for a TruckTools status. Tells the caller whether to
+        /// dispatch a primary LoadStatusEvent (and what type), and whether to fire a
+        /// follow-up InTransit (AG) event after.
+        /// </summary>
+        public struct MappingResult
+        {
+            /// <summary>If true, fire a primary LoadStatusEvent of type <see cref="PrimaryType"/>.</summary>
+            public bool DispatchPrimary;
+
+            /// <summary>The LoadStatusType for the primary event when <see cref="DispatchPrimary"/> is true.</summary>
+            public LoadStatusType PrimaryType;
+
+            /// <summary>If true, fire an additional InTransit event immediately after the primary.
+            /// Used for pickup and intermediate-stop departures so vendors see the truck advance
+            /// to "En Route" without waiting for a separate signal.</summary>
+            public bool FollowWithInTransit;
+        }
+
+        private static readonly MappingResult Skip = new MappingResult();
+
+        /// <summary>
+        /// Resolves a TruckTools status into a full dispatch decision.
+        /// Uses status.code as the primary key and status.name/description for AC parsing.
+        /// Anything not in the mapped whitelist returns Skip (no primary, no follow-up).
+        /// </summary>
+        public static MappingResult Resolve(string ttCode, string ttDescription)
+        {
+            if (string.IsNullOrWhiteSpace(ttCode)) return Skip;
+
+            // AC — broker manual entry inside the TT app. The vendor doesn't need to
+            // know that operations clicked a button; treat these as first-class
+            // milestones based on which action the broker took.
+            if (string.Equals(ttCode, "AC", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(ttDescription)) return Skip;
+
+                // "Unchecked ..." means the broker undid the entry. Vendor already got
+                // the corresponding "Checked" event; no way to retract with FK either.
+                if (ttDescription.IndexOf("Unchecked", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return Skip;
+
+                if (ttDescription.IndexOf("Arrive at Pickup",    StringComparison.OrdinalIgnoreCase) >= 0)
+                    return new MappingResult { DispatchPrimary = true, PrimaryType = LoadStatusType.ArrivedAtPickup,   FollowWithInTransit = false };
+                if (ttDescription.IndexOf("Depart from Pickup",  StringComparison.OrdinalIgnoreCase) >= 0)
+                    return new MappingResult { DispatchPrimary = true, PrimaryType = LoadStatusType.DepartedPickup,    FollowWithInTransit = true  };
+                if (ttDescription.IndexOf("Arrive at Delivery",  StringComparison.OrdinalIgnoreCase) >= 0)
+                    return new MappingResult { DispatchPrimary = true, PrimaryType = LoadStatusType.ArrivedAtDelivery, FollowWithInTransit = false };
+                if (ttDescription.IndexOf("Depart from Delivery", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return new MappingResult { DispatchPrimary = true, PrimaryType = LoadStatusType.DepartedDelivery,  FollowWithInTransit = false };
+
+                return Skip;   // AC variant we don't recognize
+            }
+
+            // Geofence codes — the primary mapping. Only these five codes dispatch
+            // (or, in SX's case, dispatch only the follow-up AG).
+            switch (ttCode.Trim().ToUpperInvariant())
+            {
+                case "PE": return new MappingResult { DispatchPrimary = true,  PrimaryType = LoadStatusType.ArrivedAtPickup,   FollowWithInTransit = false };
+                case "PX": return new MappingResult { DispatchPrimary = true,  PrimaryType = LoadStatusType.DepartedPickup,    FollowWithInTransit = true  };
+                case "DE": return new MappingResult { DispatchPrimary = true,  PrimaryType = LoadStatusType.ArrivedAtDelivery, FollowWithInTransit = false };
+                case "DX": return new MappingResult { DispatchPrimary = true,  PrimaryType = LoadStatusType.DepartedDelivery,  FollowWithInTransit = false };
+                case "SX": return new MappingResult { DispatchPrimary = false, PrimaryType = LoadStatusType.Other,             FollowWithInTransit = true  };
+            }
+
+            // Everything else — device warnings, TT lifecycle noise, notifications,
+            // RL/PD exceptions (pending FBS awareness + dedup) — filter at OTR.
+            return Skip;
+        }
     }
 }

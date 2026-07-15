@@ -21,6 +21,7 @@ namespace OTR_API.Controllers
         public TrackingResponse TrackLoad([FromBody]Load load)
         {
             TrackingResponse response = new TrackingResponse();
+            response.response = new Response();
 
             OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
             if (load == null)
@@ -51,18 +52,20 @@ namespace OTR_API.Controllers
                         dtt.InsertLoadResponse(response);
 
                         // ─── Vendor check call: load assignment ───────────────
-                        // Notify configured vendors (FourKites in Phase 1) that an
-                        // assignment exists. Idempotent across re-fires. Failures
-                        // here never break the OTR API operation.
-                        try
+                        // FIRE-AND-FORGET. Fully isolated from TT response.
+                        // FK failures are audited but NEVER surface to FBS.
+                        Task.Run(() =>
                         {
-                            Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
-                                BuildLoadAssignedEvent(load));
-                        }
-                        catch (Exception vdEx)
-                        {
-                            da.InsertErrorAuditLog(vdEx.Message, "TrackLoad.VendorDispatch");
-                        }
+                            try
+                            {
+                                Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                                    BuildLoadAssignedEvent(load));
+                            }
+                            catch (Exception vdEx)
+                            {
+                                try { da.InsertErrorAuditLog(vdEx.Message, "TrackLoad.VendorDispatch"); } catch { }
+                            }
+                        });
                         // ──────────────────────────────────────────────────────
                     }
                     catch (Exception ex)
@@ -114,19 +117,19 @@ namespace OTR_API.Controllers
                         dtt.InsertLoadResponse(response);
 
                         // ─── Vendor check call: load assignment (update) ──────────
-                        // Re-fire the assignment after an update. LoadAssignedEvent
-                        // is idempotent across re-fires — adapters overwrite the prior
-                        // assignment on the vendor side. Failures here never break the
-                        // OTR API operation.
-                        try
+                        // FIRE-AND-FORGET. Fully isolated from TT response.
+                        Task.Run(() =>
                         {
-                            Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
-                                BuildLoadAssignedEvent(load));
-                        }
-                        catch (Exception vdEx)
-                        {
-                            da.InsertErrorAuditLog(vdEx.Message, "UpdateTrackLoad.VendorDispatch");
-                        }
+                            try
+                            {
+                                Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                                    BuildLoadAssignedEvent(load));
+                            }
+                            catch (Exception vdEx)
+                            {
+                                try { da.InsertErrorAuditLog(vdEx.Message, "UpdateTrackLoad.VendorDispatch"); } catch { }
+                            }
+                        });
                         // ──────────────────────────────────────────────────────
                     }
                     catch (Exception ex)
@@ -148,6 +151,7 @@ namespace OTR_API.Controllers
         public TrackingResponse CancelLoadTracking([FromBody]Load load)
         {
             TrackingResponse response = new TrackingResponse();
+            response.response = new Response();
 
             OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
             if (load == null)
@@ -176,22 +180,26 @@ namespace OTR_API.Controllers
                         dtt.InsertLoadResponse(response);
 
                         // ─── Vendor dispatch: tracking stopped ────────────────
-                        // Notify configured vendors that tracking has been cancelled.
-                        // Failures here never break the OTR API operation.
-                        try
+                        // FIRE-AND-FORGET. Fully isolated from TT response.
+                        Task.Run(() =>
                         {
-                            Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
-                                new Vendor.Common.Events.LoadTrackingStoppedEvent
-                                {
-                                    VectorLoadId = load.VectorID.ToString(),
-                                    SourceSystem = "OTR_API",
-                                    Reason = "CANCELLED"
-                                });
-                        }
-                        catch (Exception vdEx)
-                        {
-                            da.InsertErrorAuditLog(vdEx.Message, "CancelLoadTracking.VendorDispatch");
-                        }
+                            try
+                            {
+                                Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                                    new Vendor.Common.Events.LoadTrackingStoppedEvent
+                                    {
+                                        VectorLoadId = load.VectorID.ToString(),
+                                        ShipmentNumber = (load.shipper != null && load.shipper.loadNumber != null) ? load.shipper.loadNumber : "",
+                                        BillToID = load.BillToID,
+                                        SourceSystem = "OTR_API",
+                                        Reason = "CANCELLED"
+                                    });
+                            }
+                            catch (Exception vdEx)
+                            {
+                                try { da.InsertErrorAuditLog(vdEx.Message, "CancelLoadTracking.VendorDispatch"); } catch { }
+                            }
+                        });
                         // ──────────────────────────────────────────────────────
                     }
                     catch (Exception ex)
@@ -211,7 +219,218 @@ namespace OTR_API.Controllers
         }
 
 
+        // http://localhost:5129/api/truckertoolstracking/GetTrackedLoad?VectorID=12345668
+        [HttpGet]
+        public Load GetTrackedLoad(int VectorID)
+        {
+            OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
 
+            if (VectorID <= 0)
+            {
+                da.InsertErrorAuditLog("VectorID is required", "GetTrackedLoad");
+                return null;
+            }
+
+            try
+            {
+                DataTruckerToolsTracking dtt = new DataTruckerToolsTracking();
+                return dtt.GetTrackedLoad(VectorID);
+            }
+            catch (Exception ex)
+            {
+                da.InsertErrorAuditLog(ex.Message, "GetTrackedLoad");
+                return null;
+            }
+        }
+
+        // http://localhost:5129/api/truckertoolstracking/PostPOD
+        // Live POD endpoint. FBS reads a file off disk, converts to bytes, base64-encodes,
+        // and POSTs this JSON body. OTR decodes and dispatches a DocumentAvailableEvent
+        // through the VVIProfiles-routed vendor dispatcher (same customer-scoping as
+        // SendStatus). Fire-and-forget — the response returns as soon as the event is
+        // queued; check VendorOutboundTransactions for the FK dispatch outcome.
+        //
+        // Expected JSON body:
+        //   {
+        //     "VectorID":     901731,
+        //     "FileName":     "pod-901731.pdf",
+        //     "MimeType":     "application/pdf",
+        //     "DocumentType": "ProofOfDelivery",   // optional; default POD
+        //     "Content":      "<base64-encoded bytes>"
+        //   }
+        [HttpPost]
+        public StatusResponse PostPOD([FromBody]PodUploadRequest req)
+        {
+            StatusResponse response = new StatusResponse();
+            response.timeStamp = DateTime.Now.ToString("MM/dd/yyyy HH:mm:ss tt K");
+
+            OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+
+            if (req == null)
+            {
+                da.InsertErrorAuditLog("Body is null", "PostPOD");
+                response.status = false;
+                response.errorCode = 300;
+                response.errorMessage = "Request body is required.";
+                return response;
+            }
+
+            if (req.VectorID <= 0)
+            {
+                da.InsertErrorAuditLog("VectorID is required", "PostPOD");
+                response.status = false;
+                response.errorCode = 301;
+                response.errorMessage = "VectorID is required.";
+                return response;
+            }
+
+            if (string.IsNullOrWhiteSpace(req.Content))
+            {
+                da.InsertErrorAuditLog("Content is empty for VectorID=" + req.VectorID, "PostPOD");
+                response.status = false;
+                response.errorCode = 304;
+                response.errorMessage = "Content (base64) is required.";
+                return response;
+            }
+
+            byte[] fileBytes;
+            try
+            {
+                fileBytes = Convert.FromBase64String(req.Content);
+            }
+            catch (FormatException fx)
+            {
+                da.InsertErrorAuditLog("Invalid base64 Content: " + fx.Message, "PostPOD");
+                response.status = false;
+                response.errorCode = 305;
+                response.errorMessage = "Content is not valid base64.";
+                return response;
+            }
+
+            if (fileBytes.Length == 0)
+            {
+                da.InsertErrorAuditLog("Decoded content is 0 bytes for VectorID=" + req.VectorID, "PostPOD");
+                response.status = false;
+                response.errorCode = 306;
+                response.errorMessage = "Decoded content is empty.";
+                return response;
+            }
+
+            try
+            {
+                DataTruckerToolsTracking dtt = new DataTruckerToolsTracking();
+                Load lookupLoad = dtt.GetTrackedLoad(req.VectorID);
+
+                if (lookupLoad == null || lookupLoad.VectorID <= 0)
+                {
+                    da.InsertErrorAuditLog("No tracked load found for VectorID=" + req.VectorID, "PostPOD");
+                    response.status = false;
+                    response.errorCode = 302;
+                    response.errorMessage = "No tracked load found.";
+                    return response;
+                }
+
+                if (lookupLoad.BillToID <= 0)
+                {
+                    da.InsertErrorAuditLog("BillToID=0 for VectorID=" + req.VectorID + " — cannot dispatch POD without customer scope", "PostPOD.NoCustomerScope");
+                    response.status = false;
+                    response.errorCode = 303;
+                    response.errorMessage = "BillToID missing on Tracking row.";
+                    return response;
+                }
+
+                string shipmentNumber = (lookupLoad.shipper != null && lookupLoad.shipper.loadNumber != null) ? lookupLoad.shipper.loadNumber : "";
+                string fileName = !string.IsNullOrWhiteSpace(req.FileName) ? req.FileName : ("pod-" + lookupLoad.VectorID + ".pdf");
+                string mimeType = !string.IsNullOrWhiteSpace(req.MimeType) ? req.MimeType : "application/pdf";
+
+                // Parse DocumentType with a POD default.
+                Vendor.Common.Events.DocumentType docType = Vendor.Common.Events.DocumentType.ProofOfDelivery;
+                if (!string.IsNullOrWhiteSpace(req.DocumentType))
+                {
+                    Vendor.Common.Events.DocumentType parsed;
+                    if (Enum.TryParse(req.DocumentType, ignoreCase: true, result: out parsed))
+                        docType = parsed;
+                }
+
+                // Fire-and-forget so an FK failure never blocks the OTR response.
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                            new Vendor.Common.Events.DocumentAvailableEvent
+                            {
+                                VectorLoadId = lookupLoad.VectorID.ToString(),
+                                ShipmentNumber = shipmentNumber,
+                                BillToID = lookupLoad.BillToID,
+                                SourceSystem = "OTR_API",
+                                DocumentType = docType,
+                                FileName = fileName,
+                                MimeType = mimeType,
+                                Content = fileBytes,
+                                CapturedUtc = DateTime.UtcNow
+                            });
+                    }
+                    catch (Exception vdEx)
+                    {
+                        try { da.InsertErrorAuditLog(vdEx.Message, "PostPOD.VendorDispatch"); } catch { }
+                    }
+                });
+
+                response.status = true;
+                response.Message = "POD dispatched for VectorID=" + req.VectorID + ", ShipmentNumber=" + shipmentNumber + " (" + fileBytes.Length + " bytes)";
+                return response;
+            }
+            catch (Exception ex)
+            {
+                da.InsertErrorAuditLog(ex.Message, "PostPOD");
+                response.status = false;
+                response.errorCode = 200;
+                response.errorMessage = ex.Message;
+                return response;
+            }
+        }
+
+        /// <summary>
+        /// Request body shape for POST /api/truckertoolstracking/PostPOD. FBS/POD app
+        /// reads a file off disk, converts to a byte array, base64-encodes it, and sends
+        /// as JSON. OTR decodes and dispatches a DocumentAvailableEvent through the
+        /// vendor dispatcher.
+        /// </summary>
+        public class PodUploadRequest
+        {
+            /// <summary>Vector FBS LoadID. Required. Used to look up the Tracking row for BillToID + ShipmentID.</summary>
+            public int VectorID { get; set; }
+            /// <summary>Original filename for vendor display. Optional; defaults to "pod-{VectorID}.pdf".</summary>
+            public string FileName { get; set; }
+            /// <summary>MIME type. Optional; defaults to "application/pdf".</summary>
+            public string MimeType { get; set; }
+            /// <summary>DocumentType enum name. Optional; defaults to ProofOfDelivery.</summary>
+            public string DocumentType { get; set; }
+            /// <summary>Base64-encoded file bytes. Required.</summary>
+            public string Content { get; set; }
+        }
+
+        /// <summary>
+        /// Returns a valid minimal PDF (single blank page) as a byte array. Handy for
+        /// wiring/testing the POD upload path without needing a real file on disk.
+        /// The bytes below are the smallest well-formed PDF that Adobe Reader will open.
+        /// </summary>
+        private byte[] BuildMinimalPdf()
+        {
+            string pdf =
+                "%PDF-1.1\n" +
+                "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
+                "2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n" +
+                "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\n" +
+                "xref\n0 4\n" +
+                "0000000000 65535 f \n" +
+                "0000000009 00000 n \n" +
+                "0000000052 00000 n \n" +
+                "0000000098 00000 n \n" +
+                "trailer<</Size 4/Root 1 0 R>>\nstartxref\n149\n%%EOF";
+            return System.Text.Encoding.ASCII.GetBytes(pdf);
+        }
 
         //http://localhost:5129/api/truckertoolstracking/GetAvailableLoads
         [HttpGet]
@@ -240,7 +459,6 @@ namespace OTR_API.Controllers
 
             return response;
         }
-
 
 
         //http://localhost:5129/api/truckertoolstracking/sendstatus
@@ -454,26 +672,33 @@ namespace OTR_API.Controllers
                             lookupLoad.loadNumber = lc.loadNumber;
                             lookupLoad = dtt.GetLoadTracking(lookupLoad);
 
-                            if (lookupLoad != null && lookupLoad.VectorID > 0)
+                            // Customer scope guard: BillToID identifies which customer's VVI
+                            // profile should receive this dispatch. 0 means the tracking record
+                            // predates the FBS BillToID plumbing, or FBS didn't populate it.
+                            // Skip dispatch rather than risk sending status to the wrong customer's
+                            // vendor account (cross-customer leak). See else-if below for audit trail.
+                            if (lookupLoad != null && lookupLoad.VectorID > 0 && lookupLoad.BillToID > 0)
                             {
                                 string vectorLoadId = lookupLoad.VectorID.ToString();
+                                int billToId = lookupLoad.BillToID;
+                                string shipmentNumber = (lookupLoad.shipper != null && lookupLoad.shipper.loadNumber != null) ? lookupLoad.shipper.loadNumber : "";
                                 string verbosity = Vendor.Common.Dispatch.VendorDispatcher.Instance
                                     .GetDispatchVerbosity("FourKites");
                                 bool generous = string.Equals(verbosity, "Generous",
                                     StringComparison.OrdinalIgnoreCase);
 
                                 // Location events
-                                DispatchLocation(vectorLoadId, lc.latestLocation, da);
+                                DispatchLocation(vectorLoadId, shipmentNumber, billToId, lc.latestLocation, da);
                                 if (generous)
                                 {
                                     if (lc.latestStatus != null)
-                                        DispatchLocation(vectorLoadId, lc.latestStatus.location, da);
+                                        DispatchLocation(vectorLoadId, shipmentNumber, billToId, lc.latestStatus.location, da);
                                     if (lc.status != null)
-                                        DispatchLocation(vectorLoadId, lc.status.location, da);
+                                        DispatchLocation(vectorLoadId, shipmentNumber, billToId, lc.status.location, da);
                                     if (lc.locations != null)
                                     {
                                         foreach (Location loc in lc.locations)
-                                            DispatchLocation(vectorLoadId, loc, da);
+                                            DispatchLocation(vectorLoadId, shipmentNumber, billToId, loc, da);
                                     }
                                 }
                                 else if (lc.latestLocation == null)
@@ -485,19 +710,28 @@ namespace OTR_API.Controllers
                                     else if (lc.status != null && lc.status.location != null)
                                         fallback = lc.status.location;
                                     if (fallback != null)
-                                        DispatchLocation(vectorLoadId, fallback, da);
+                                        DispatchLocation(vectorLoadId, shipmentNumber, billToId, fallback, da);
                                 }
 
                                 // Status events
                                 if (generous)
                                 {
-                                    DispatchStatus(vectorLoadId, lc.latestStatus, da);
-                                    DispatchStatus(vectorLoadId, lc.status, da);
+                                    DispatchStatus(vectorLoadId, shipmentNumber, billToId, lc.latestStatus, da);
+                                    DispatchStatus(vectorLoadId, shipmentNumber, billToId, lc.status, da);
                                 }
                                 else
                                 {
-                                    DispatchStatus(vectorLoadId, lc.latestStatus ?? lc.status, da);
+                                    DispatchStatus(vectorLoadId, shipmentNumber, billToId, lc.latestStatus ?? lc.status, da);
                                 }
+                            }
+                            else if (lookupLoad != null && lookupLoad.VectorID > 0 && lookupLoad.BillToID <= 0)
+                            {
+                                // Have a VectorLoadId but no customer scope. Log for visibility
+                                // and skip. Once FBS is deployed with BillToID plumbing, this row
+                                // firing on new records means FBS is not populating BillToID.
+                                da.InsertErrorAuditLog(
+                                    "SKIPPED SendStatus vendor dispatch: BillToID=0 for VectorLoadId=" + lookupLoad.VectorID + ", loadNumber=" + lc.loadNumber,
+                                    "SendStatus.VendorDispatch.NoCustomerScope");
                             }
                         }
                     }
@@ -644,6 +878,8 @@ namespace OTR_API.Controllers
             return new Vendor.Common.Events.LoadAssignedEvent
             {
                 VectorLoadId   = load.VectorID.ToString(),
+                ShipmentNumber = (load.shipper != null && load.shipper.loadNumber != null) ? load.shipper.loadNumber : "",
+                BillToID       = load.BillToID,
                 SourceSystem   = "OTR_API",
                 ExternalLoadId = load.loadTrackExternalId,
                 LoadType       = load.loadType,
@@ -767,7 +1003,7 @@ namespace OTR_API.Controllers
         /// Dispatches a LocationReportedEvent if the given TT location has valid coords.
         /// No-ops on null or empty lat/lon. Errors are logged to DataAudit, never thrown.
         /// </summary>
-        private void DispatchLocation(string vectorLoadId, Location loc, OTR_API.DataClasses.DataAudit da)
+        private void DispatchLocation(string vectorLoadId, string shipmentNumber, int billToId, Location loc, OTR_API.DataClasses.DataAudit da)
         {
             if (loc == null) return;
             if (string.IsNullOrEmpty(loc.lat) || string.IsNullOrEmpty(loc.lon)) return;
@@ -778,6 +1014,8 @@ namespace OTR_API.Controllers
                     new Vendor.Common.Events.LocationReportedEvent
                     {
                         VectorLoadId = vectorLoadId,
+                        ShipmentNumber = shipmentNumber,
+                        BillToID = billToId,
                         SourceSystem = "OTR_API",
                         Latitude = loc.lat,
                         Longitude = loc.lon,
@@ -799,7 +1037,7 @@ namespace OTR_API.Controllers
         /// raw code in SourceStatusCode so adapters can pass it through verbatim.
         /// No-ops on null or empty code/name. Errors are logged to DataAudit, never thrown.
         /// </summary>
-        private void DispatchStatus(string vectorLoadId, Status status, OTR_API.DataClasses.DataAudit da)
+        private void DispatchStatus(string vectorLoadId, string shipmentNumber, int billToId, Status status, OTR_API.DataClasses.DataAudit da)
         {
             if (status == null) return;
             string rawCode = !string.IsNullOrEmpty(status.code) ? status.code : status.name;
@@ -807,19 +1045,48 @@ namespace OTR_API.Controllers
 
             try
             {
-                Vendor.Common.Events.LoadStatusType statusType =
-                    OTR_API.DataClasses.TruckToolsStatusMapper.Map(rawCode);
+                // Ask the mapper how to handle this TT signal. It knows the whitelist,
+                // AC parsing rules, and when to auto-fire an "En Route" (AG) follow-up.
+                var decision = OTR_API.DataClasses.TruckToolsStatusMapper.Resolve(
+                    status.code, status.name);
 
-                Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
-                    new Vendor.Common.Events.LoadStatusEvent
-                    {
-                        VectorLoadId = vectorLoadId,
-                        SourceSystem = "OTR_API",
-                        StatusType = statusType,
-                        StatusTimeUtc = TryParseUtc(status.timeStamp),
-                        SourceStatusCode = status.code,
-                        SourceStatusDescription = status.name
-                    });
+                DateTime statusTimeUtc = TryParseUtc(status.timeStamp);
+
+                // Primary event — fires for PE / PX / DE / DX and for AC variants we
+                // recognize. SX skips this and goes straight to the follow-up.
+                if (decision.DispatchPrimary)
+                {
+                    Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                        new Vendor.Common.Events.LoadStatusEvent
+                        {
+                            VectorLoadId = vectorLoadId,
+                            ShipmentNumber = shipmentNumber,
+                            BillToID = billToId,
+                            SourceSystem = "OTR_API",
+                            StatusType = decision.PrimaryType,
+                            StatusTimeUtc = statusTimeUtc,
+                            SourceStatusCode = status.code,
+                            SourceStatusDescription = status.name
+                        });
+                }
+
+                // Auto-follow "En Route" (AG) — fires after departures so vendors see the
+                // truck advance without waiting for a separate in-transit signal.
+                if (decision.FollowWithInTransit)
+                {
+                    Vendor.Common.Dispatch.VendorDispatcher.Instance.Dispatch(
+                        new Vendor.Common.Events.LoadStatusEvent
+                        {
+                            VectorLoadId = vectorLoadId,
+                            ShipmentNumber = shipmentNumber,
+                            BillToID = billToId,
+                            SourceSystem = "OTR_API",
+                            StatusType = Vendor.Common.Events.LoadStatusType.InTransit,
+                            StatusTimeUtc = statusTimeUtc,
+                            SourceStatusCode = "AG",
+                            SourceStatusDescription = "En Route"
+                        });
+                }
             }
             catch (Exception ex)
             {

@@ -192,7 +192,7 @@ namespace Vendor.FourKites.Mapping
             if (!string.IsNullOrWhiteSpace(evt.City))  locationUpdate["city"]  = evt.City;
             if (!string.IsNullOrWhiteSpace(evt.State)) locationUpdate["state"] = evt.State;
 
-            var body = BuildDispatcherEnvelope(evt.VectorLoadId, cfg, locationUpdate: locationUpdate, eventUpdate: null);
+            var body = BuildDispatcherEnvelope(evt.ShipmentNumber, cfg, locationUpdate: locationUpdate, eventUpdate: null);
             return new BuildResult { Json = body.ToString(Formatting.None), RequestId = requestId };
         }
 
@@ -243,7 +243,7 @@ namespace Vendor.FourKites.Mapping
             {
                 var stopUpdate = BuildStopUpdateFromStop(evt.AtStop);
                 var apptBody = BuildDispatcherEnvelope(
-                    evt.VectorLoadId, cfg,
+                    evt.ShipmentNumber, cfg,
                     locationUpdate: null, eventUpdate: null, stopUpdate: stopUpdate);
                 return new BuildResult { Json = apptBody.ToString(Formatting.None), RequestId = requestId };
             }
@@ -265,7 +265,7 @@ namespace Vendor.FourKites.Mapping
                 milestoneEventUpdate["delivered"] = true;
 
             var statusBody = BuildDispatcherEnvelope(
-                evt.VectorLoadId, cfg,
+                evt.ShipmentNumber, cfg,
                 locationUpdate: null, eventUpdate: milestoneEventUpdate, stopUpdate: null);
             return new BuildResult { Json = statusBody.ToString(Formatting.None), RequestId = requestId };
         }
@@ -339,7 +339,7 @@ namespace Vendor.FourKites.Mapping
         /// the payload but never applies the appointment change).
         /// </summary>
         private static JObject BuildDispatcherEnvelope(
-            string vectorLoadId,
+            string shipmentNumber,
             FourKitesConfig cfg,
             JObject locationUpdate,
             JObject eventUpdate,
@@ -374,9 +374,15 @@ namespace Vendor.FourKites.Mapping
             */
 
             // ─── NEW envelope — adds stopUpdate at the sibling level ─────────────
+            // Identifier is ALWAYS the customer's shipmentNumber (Tracking.ShipmentID /
+            // MasterBOL on FBS). Vector's internal LoadID is intentionally NOT used here
+            // because FK loads are created by the customer using their own shipmentID;
+            // FK doesn't know Vector's number. Empty shipmentNumber will cause FK to
+            // reject the payload — that rejection surfaces in VendorOutboundTransactions
+            // as a clean signal that the Tracking row is missing ShipmentID.
             var identifierKey = new JObject
             {
-                ["identifier"]     = vectorLoadId,
+                ["identifier"]     = shipmentNumber ?? "",
                 ["identifierType"] = "loadNumber"
             };
 
@@ -434,7 +440,9 @@ namespace Vendor.FourKites.Mapping
                 ["load"] = new JObject
                 {
                     ["identifier"] = "loadNumber",
-                    ["value"]      = evt.VectorLoadId
+                    // Use the customer's shipmentNumber as FK's identifier — same rule as
+                    // the Dispatcher API path. FK doesn't know VectorLoadId.
+                    ["value"]      = evt.ShipmentNumber ?? ""
                 },
                 ["documents"] = new JArray
                 {
@@ -442,10 +450,9 @@ namespace Vendor.FourKites.Mapping
                     {
                         ["type"]          = fkFileType,
                         ["document_type"] = fkDocType,
-                        // PHASE 1 PLACEHOLDER: file bytes aren't yet wired into the event.
-                        // When the FBS POD capture path lands, populate base64_content here
-                        // from evt.FileContent (or equivalent property).
-                        ["base64_content"] = "" // PENDING — see O-008
+                        ["base64_content"] = evt.Content != null && evt.Content.Length > 0
+                            ? Convert.ToBase64String(evt.Content)
+                            : ""
                     }
                 }
             };

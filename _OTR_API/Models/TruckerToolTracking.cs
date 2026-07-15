@@ -39,8 +39,12 @@ namespace OTR_API.TruckerToolsTracking.Models
 
         [JsonIgnore]
         public int ID { get; set; }
+
         public int VectorID { get; set; }
         public string Message { get; set; }
+
+        public int BillToID { get; set; }
+        public bool ShouldSerializeBillToID() => false;
     }
 
     public class Action
@@ -111,9 +115,11 @@ namespace OTR_API.TruckerToolsTracking.Models
         public int emailInterval { get; set; }
         public string referenceNumber { get; set; }
 
-        [JsonIgnore]
         public int ID { get; set; }
+        public bool ShouldSerializeID() => false;
+
         public int TrackingID { get; set; }
+        public bool ShouldSerializeTrackingID() => false;
     }
 
 

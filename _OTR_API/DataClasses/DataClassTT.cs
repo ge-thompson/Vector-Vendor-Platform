@@ -3224,9 +3224,9 @@ namespace OTR_API.TruckerTools.DataClasses
             cd.Parameters.AddWithValue("@loadNotes", load.loadNotes);
             cd.Parameters.AddWithValue("@isTeamLoad", load.isTeamLoad);
             cd.Parameters.AddWithValue("@carrierDispatcherEmail", load.carrierDispatcherEmail);
-            cd.Parameters.AddWithValue("@shipperID", (load.shipper.shipperId  == null ? "0" : load.shipper.shipperId));
+            cd.Parameters.AddWithValue("@ShipmentID", (load.shipper != null && load.shipper.loadNumber != null ? load.shipper.loadNumber : ""));
             cd.Parameters.AddWithValue("@VectorID", load.VectorID);
-
+            cd.Parameters.AddWithValue("@BillToID", load.BillToID);
 
             SqlParameter outputparm = new SqlParameter("@responseMessage", SqlDbType.Int)
             {
@@ -3711,7 +3711,9 @@ namespace OTR_API.TruckerTools.DataClasses
             cd.Parameters.AddWithValue("@isTeamLoad", load.isTeamLoad);
             cd.Parameters.AddWithValue("@carrierDispatcherEmail", load.carrierDispatcherEmail);
 
+            cd.Parameters.AddWithValue("@ShipmentID", (load.shipper != null && load.shipper.loadNumber != null ? load.shipper.loadNumber : ""));
             cd.Parameters.AddWithValue("@VectorID", load.VectorID);
+            cd.Parameters.AddWithValue("@BillToID", load.BillToID);
 
 
             SqlParameter outputparm = new SqlParameter("@responseMessage", SqlDbType.Int)
@@ -3817,6 +3819,17 @@ namespace OTR_API.TruckerTools.DataClasses
 
                         if (reader["ID"] != DBNull.Value) { obj.ID = (int)reader["ID"]; }
                         if (reader["VectorID"] != DBNull.Value) { obj.VectorID = (int)reader["VectorID"]; }
+                        if (reader["BillToID"] != DBNull.Value) { obj.BillToID = (int)reader["BillToID"]; }
+
+                        if (reader["ShipmentID"] != DBNull.Value)
+                        {
+                            // Hydrate shipper.loadNumber from Tracking.ShipmentID so downstream
+                            // dispatch code can populate VendorEvent.ShipmentNumber.
+                            if (obj.shipper == null) obj.shipper = new OTR_API.TruckerToolsTracking.Models.Shipper();
+                            obj.shipper.loadNumber = (string)reader["ShipmentID"];
+                            obj.shipper.ID = obj.BillToID; 
+                        }
+
                         if (reader["loadTrackExternalId"] != DBNull.Value) { obj.loadTrackExternalId = (string)reader["loadTrackExternalId"]; }
                         if (reader["loadNumber"] != DBNull.Value) { obj.loadNumber = (string)reader["loadNumber"]; }
                         if (reader["dispatcherId"] != DBNull.Value) { obj.dispatcherId = (string)reader["dispatcherId"]; }
@@ -3833,7 +3846,7 @@ namespace OTR_API.TruckerTools.DataClasses
                         if (reader["driverComments"] != DBNull.Value) { obj.driverComments = (string)reader["driverComments"]; }
                         if (reader["isTeamLoad"] != DBNull.Value) { obj.isTeamLoad = (bool)reader["isTeamLoad"]; }
                         if (reader["carrierDispatcherEmail"] != DBNull.Value) { obj.carrierDispatcherEmail = (string)reader["carrierDispatcherEmail"]; }
-
+                        
                     }
                 }
             }
@@ -4112,6 +4125,319 @@ namespace OTR_API.TruckerTools.DataClasses
 
             return results;
 
+        }
+
+        public OTR_API.TruckerToolsTracking.Models.Load GetTrackedLoad(int VectorID)
+        {
+            OTR_API.TruckerToolsTracking.Models.Load obj = new OTR_API.TruckerToolsTracking.Models.Load();
+
+            SqlConnection cn = new SqlConnection(ConfigurationManager.ConnectionStrings["hostTT"].ConnectionString);
+            cn.Open();
+
+            SqlCommand cd = new SqlCommand("spTrackingByVectorID_Get", cn);
+            cd.CommandType = CommandType.StoredProcedure;
+            cd.Parameters.AddWithValue("@VectorID", VectorID);
+
+            try
+            {
+                using (SqlDataReader reader = cd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        if (reader["ID"] != DBNull.Value) { obj.ID = (int)reader["ID"]; }
+                        if (reader["VectorID"] != DBNull.Value) { obj.VectorID = (int)reader["VectorID"]; }
+                        if (reader["BillToID"] != DBNull.Value) { obj.BillToID = (int)reader["BillToID"]; }
+                        if (reader["loadTrackExternalId"] != DBNull.Value) { obj.loadTrackExternalId = (string)reader["loadTrackExternalId"]; }
+                        if (reader["loadNumber"] != DBNull.Value) { obj.loadNumber = (string)reader["loadNumber"]; }
+                        if (reader["dispatcherId"] != DBNull.Value) { obj.dispatcherId = (string)reader["dispatcherId"]; }
+                        if (reader["dispatcherEmail"] != DBNull.Value) { obj.dispatcherEmail = (string)reader["dispatcherEmail"]; }
+                        if (reader["dispatcherPhoneNumber"] != DBNull.Value) { obj.dispatcherPhoneNumber = (string)reader["dispatcherPhoneNumber"]; }
+                        if (reader["textmessage"] != DBNull.Value) { obj.textmessage = (string)reader["textmessage"]; }
+                        if (reader["loadType"] != DBNull.Value) { obj.loadType = (string)reader["loadType"]; }
+                        if (reader["trailerType"] != DBNull.Value) { obj.trailerType = (string)reader["trailerType"]; }
+                        if (reader["driverCell"] != DBNull.Value) { obj.driverCell = (string)reader["driverCell"]; }
+                        if (reader["trailerNumber"] != DBNull.Value) { obj.trailerNumber = (string)reader["trailerNumber"]; }
+                        if (reader["truckNumber"] != DBNull.Value) { obj.truckNumber = (string)reader["truckNumber"]; }
+                        if (reader["driverName"] != DBNull.Value) { obj.driverName = (string)reader["driverName"]; }
+                        if (reader["driverType"] != DBNull.Value) { obj.driverType = (string)reader["driverType"]; }
+                        if (reader["driverComments"] != DBNull.Value) { obj.driverComments = (string)reader["driverComments"]; }
+                        if (reader["loadNotes"] != DBNull.Value) { obj.loadNotes = (string)reader["loadNotes"]; }
+                        if (reader["isTeamLoad"] != DBNull.Value) { obj.isTeamLoad = (bool)reader["isTeamLoad"]; }
+                        if (reader["carrierDispatcherEmail"] != DBNull.Value) { obj.carrierDispatcherEmail = (string)reader["carrierDispatcherEmail"]; }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog(ex.Message, "DataLoads.TT.GetTrackedLoad");
+            }
+
+            if (cn.State != ConnectionState.Closed) { cn.Close(); }
+
+            if (obj.ID == 0) return null;
+
+            // Hydrate child objects using TrackingID
+            obj.shipper = GetTrackedShipper(obj.ID);
+            obj.carrier = GetTrackedCarrier(obj.ID);
+            obj.broker = GetTrackedBroker(obj.ID);
+            obj.stops = GetTrackedStops(obj.ID);
+
+            return obj;
+        }
+
+        public OTR_API.TruckerToolsTracking.Models.Shipper GetTrackedShipper(int TrackingID)
+        {
+            OTR_API.TruckerToolsTracking.Models.Shipper obj = null;
+
+            SqlConnection cn = new SqlConnection(ConfigurationManager.ConnectionStrings["hostTT"].ConnectionString);
+            cn.Open();
+
+            SqlCommand cd = new SqlCommand(
+                "SELECT TOP 1 ID, TrackingID, shipperId, loadNumber, emails, emailInterval, referenceNumber " +
+                "FROM TrackingShipper WHERE TrackingID = @TrackingID AND Deleted = 0", cn);
+            cd.Parameters.AddWithValue("@TrackingID", TrackingID);
+
+            try
+            {
+                using (SqlDataReader reader = cd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        obj = new OTR_API.TruckerToolsTracking.Models.Shipper();
+                        if (reader["ID"] != DBNull.Value) { obj.ID = (int)reader["ID"]; }
+                        if (reader["TrackingID"] != DBNull.Value) { obj.TrackingID = (int)reader["TrackingID"]; }
+                        if (reader["shipperId"] != DBNull.Value) { obj.shipperId = (string)reader["shipperId"]; }
+                        if (reader["loadNumber"] != DBNull.Value) { obj.loadNumber = (string)reader["loadNumber"]; }
+                        if (reader["emails"] != DBNull.Value) { obj.emails = (string)reader["emails"]; }
+                        if (reader["emailInterval"] != DBNull.Value) { obj.emailInterval = (int)reader["emailInterval"]; }
+                        if (reader["referenceNumber"] != DBNull.Value) { obj.referenceNumber = (string)reader["referenceNumber"]; }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog(ex.Message, "DataLoads.TT.GetTrackedShipper");
+            }
+
+            if (cn.State != ConnectionState.Closed) { cn.Close(); }
+            return obj;
+        }
+
+        public OTR_API.TruckerToolsTracking.Models.Carrier GetTrackedCarrier(int TrackingID)
+        {
+            OTR_API.TruckerToolsTracking.Models.Carrier obj = null;
+
+            SqlConnection cn = new SqlConnection(ConfigurationManager.ConnectionStrings["hostTT"].ConnectionString);
+            cn.Open();
+
+            SqlCommand cd = new SqlCommand(
+                "SELECT TOP 1 ID, TrackingID, companyName, docketNumber, contactName, contactPhone, contactPhoneExt, contactEmail " +
+                "FROM TrackingCarrier WHERE TrackingID = @TrackingID AND Deleted = 0", cn);
+            cd.Parameters.AddWithValue("@TrackingID", TrackingID);
+
+            try
+            {
+                using (SqlDataReader reader = cd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        obj = new OTR_API.TruckerToolsTracking.Models.Carrier();
+                        if (reader["ID"] != DBNull.Value) { obj.ID = (int)reader["ID"]; }
+                        if (reader["TrackingID"] != DBNull.Value) { obj.TrackingID = (int)reader["TrackingID"]; }
+                        if (reader["companyName"] != DBNull.Value) { obj.companyName = (string)reader["companyName"]; }
+                        if (reader["docketNumber"] != DBNull.Value) { obj.docketNumber = (string)reader["docketNumber"]; }
+                        if (reader["contactName"] != DBNull.Value) { obj.contactName = (string)reader["contactName"]; }
+                        if (reader["contactPhone"] != DBNull.Value) { obj.contactPhone = (string)reader["contactPhone"]; }
+                        if (reader["contactPhoneExt"] != DBNull.Value) { obj.contactPhoneExt = (string)reader["contactPhoneExt"]; }
+                        if (reader["contactEmail"] != DBNull.Value) { obj.contactEmail = (string)reader["contactEmail"]; }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog(ex.Message, "DataLoads.TT.GetTrackedCarrier");
+            }
+
+            if (cn.State != ConnectionState.Closed) { cn.Close(); }
+            return obj;
+        }
+
+        public OTR_API.TruckerToolsTracking.Models.Broker GetTrackedBroker(int TrackingID)
+        {
+            OTR_API.TruckerToolsTracking.Models.Broker obj = null;
+
+            SqlConnection cn = new SqlConnection(ConfigurationManager.ConnectionStrings["hostTT"].ConnectionString);
+            cn.Open();
+
+            SqlCommand cd = new SqlCommand(
+                "SELECT TOP 1 ID, TrackingID, companyName, docketNumber, contactName, contactPhone, contactPhoneExt, contactEmail " +
+                "FROM TrackingBroker WHERE TrackingID = @TrackingID AND Deleted = 0", cn);
+            cd.Parameters.AddWithValue("@TrackingID", TrackingID);
+
+            try
+            {
+                using (SqlDataReader reader = cd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        obj = new OTR_API.TruckerToolsTracking.Models.Broker();
+                        if (reader["ID"] != DBNull.Value) { obj.ID = (int)reader["ID"]; }
+                        if (reader["TrackingID"] != DBNull.Value) { obj.TrackingID = (int)reader["TrackingID"]; }
+                        if (reader["companyName"] != DBNull.Value) { obj.companyName = (string)reader["companyName"]; }
+                        if (reader["docketNumber"] != DBNull.Value) { obj.docketNumber = (string)reader["docketNumber"]; }
+                        if (reader["contactName"] != DBNull.Value) { obj.contactName = (string)reader["contactName"]; }
+                        if (reader["contactPhone"] != DBNull.Value) { obj.contactPhone = (string)reader["contactPhone"]; }
+                        if (reader["contactPhoneExt"] != DBNull.Value) { obj.contactPhoneExt = (string)reader["contactPhoneExt"]; }
+                        if (reader["contactEmail"] != DBNull.Value) { obj.contactEmail = (string)reader["contactEmail"]; }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog(ex.Message, "DataLoads.TT.GetTrackedBroker");
+            }
+
+            if (cn.State != ConnectionState.Closed) { cn.Close(); }
+            return obj;
+        }
+
+        public List<OTR_API.TruckerToolsTracking.Models.Stop> GetTrackedStops(int TrackingID)
+        {
+            List<OTR_API.TruckerToolsTracking.Models.Stop> stops = new List<OTR_API.TruckerToolsTracking.Models.Stop>();
+
+            SqlConnection cn = new SqlConnection(ConfigurationManager.ConnectionStrings["hostTT"].ConnectionString);
+            cn.Open();
+
+            SqlCommand cd = new SqlCommand(
+                "SELECT ID, TrackingID, loadNumber, orderNumber, address, city, state, zipcode, " +
+                "lat, lon, [datetime], datetimeExit, geofenceRadius, notes, stopExternalId " +
+                "FROM TrackingStop WHERE TrackingID = @TrackingID AND Deleted = 0 ORDER BY orderNumber", cn);
+            cd.Parameters.AddWithValue("@TrackingID", TrackingID);
+
+            try
+            {
+                using (SqlDataReader reader = cd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        OTR_API.TruckerToolsTracking.Models.Stop stop = new OTR_API.TruckerToolsTracking.Models.Stop();
+                        if (reader["ID"] != DBNull.Value) { stop.ID = (int)reader["ID"]; }
+                        if (reader["TrackingID"] != DBNull.Value) { stop.TrackingID = (int)reader["TrackingID"]; }
+                        if (reader["loadNumber"] != DBNull.Value) { stop.loadNumber = (int)reader["loadNumber"]; }
+                        if (reader["orderNumber"] != DBNull.Value) { stop.orderNumber = (int)reader["orderNumber"]; }
+                        if (reader["address"] != DBNull.Value) { stop.address = (string)reader["address"]; }
+                        if (reader["city"] != DBNull.Value) { stop.city = (string)reader["city"]; }
+                        if (reader["state"] != DBNull.Value) { stop.state = (string)reader["state"]; }
+                        if (reader["zipcode"] != DBNull.Value) { stop.zipcode = (string)reader["zipcode"]; }
+                        if (reader["lat"] != DBNull.Value) { stop.lat = (decimal)reader["lat"]; }
+                        if (reader["lon"] != DBNull.Value) { stop.lon = (decimal)reader["lon"]; }
+                        if (reader["datetime"] != DBNull.Value) { stop.datetime = (string)reader["datetime"]; }
+                        if (reader["datetimeExit"] != DBNull.Value) { stop.datetimeExit = (string)reader["datetimeExit"]; }
+                        if (reader["geofenceRadius"] != DBNull.Value) { stop.geofenceRadius = (int)reader["geofenceRadius"]; }
+                        if (reader["notes"] != DBNull.Value) { stop.notes = (string)reader["notes"]; }
+                        if (reader["stopExternalId"] != DBNull.Value) { stop.stopExternalId = (string)reader["stopExternalId"]; }
+
+                        stops.Add(stop);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog(ex.Message, "DataLoads.TT.GetTrackedStops");
+            }
+
+            if (cn.State != ConnectionState.Closed) { cn.Close(); }
+
+            // Hydrate each stop's actions and metadata
+            foreach (var stop in stops)
+            {
+                stop.actions = GetTrackedStopActions(stop.ID);
+                stop.metadata = GetTrackedStopMetadata(stop.ID);
+            }
+
+            return stops;
+        }
+
+        public List<OTR_API.TruckerToolsTracking.Models.Action> GetTrackedStopActions(int TrackingStopID)
+        {
+            List<OTR_API.TruckerToolsTracking.Models.Action> actions = new List<OTR_API.TruckerToolsTracking.Models.Action>();
+
+            SqlConnection cn = new SqlConnection(ConfigurationManager.ConnectionStrings["hostTT"].ConnectionString);
+            cn.Open();
+
+            SqlCommand cd = new SqlCommand(
+                "SELECT TrackingStopID, id, name, item, isLastAction, required, driverInput " +
+                "FROM TrackingStopAction WHERE TrackingStopID = @TrackingStopID", cn);
+            cd.Parameters.AddWithValue("@TrackingStopID", TrackingStopID);
+
+            try
+            {
+                using (SqlDataReader reader = cd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        OTR_API.TruckerToolsTracking.Models.Action a = new OTR_API.TruckerToolsTracking.Models.Action();
+                        if (reader["TrackingStopID"] != DBNull.Value) { a.TrackingStopID = (int)reader["TrackingStopID"]; }
+                        if (reader["id"] != DBNull.Value) { a.id = (string)reader["id"]; }
+                        if (reader["name"] != DBNull.Value) { a.name = (string)reader["name"]; }
+                        if (reader["item"] != DBNull.Value) { a.item = (string)reader["item"]; }
+                        if (reader["isLastAction"] != DBNull.Value) { a.isLastAction = (bool)reader["isLastAction"]; }
+                        if (reader["required"] != DBNull.Value) { a.required = (bool)reader["required"]; }
+                        if (reader["driverInput"] != DBNull.Value) { a.driverInput = (bool)reader["driverInput"]; }
+
+                        actions.Add(a);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog(ex.Message, "DataLoads.TT.GetTrackedStopActions");
+            }
+
+            if (cn.State != ConnectionState.Closed) { cn.Close(); }
+            return actions;
+        }
+
+        public List<OTR_API.TruckerToolsTracking.Models.Metadata> GetTrackedStopMetadata(int TrackingStopID)
+        {
+            List<OTR_API.TruckerToolsTracking.Models.Metadata> meta = new List<OTR_API.TruckerToolsTracking.Models.Metadata>();
+
+            SqlConnection cn = new SqlConnection(ConfigurationManager.ConnectionStrings["hostTT"].ConnectionString);
+            cn.Open();
+
+            SqlCommand cd = new SqlCommand(
+                "SELECT TrackingStopID, name, value FROM TrackingStopMetadata WHERE TrackingStopID = @TrackingStopID", cn);
+            cd.Parameters.AddWithValue("@TrackingStopID", TrackingStopID);
+
+            try
+            {
+                using (SqlDataReader reader = cd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        OTR_API.TruckerToolsTracking.Models.Metadata m = new OTR_API.TruckerToolsTracking.Models.Metadata();
+                        if (reader["TrackingStopID"] != DBNull.Value) { m.TrackingStopID = (int)reader["TrackingStopID"]; }
+                        if (reader["name"] != DBNull.Value) { m.name = (string)reader["name"]; }
+                        if (reader["value"] != DBNull.Value) { m.value = (string)reader["value"]; }
+
+                        meta.Add(m);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                OTR_API.DataClasses.DataAudit da = new OTR_API.DataClasses.DataAudit();
+                da.InsertErrorAuditLog(ex.Message, "DataLoads.TT.GetTrackedStopMetadata");
+            }
+
+            if (cn.State != ConnectionState.Closed) { cn.Close(); }
+            return meta;
         }
 
 

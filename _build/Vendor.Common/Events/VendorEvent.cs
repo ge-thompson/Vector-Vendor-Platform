@@ -31,6 +31,18 @@ namespace Vendor.Common.Events
         public string ShipmentNumber { get; set; }
 
         /// <summary>
+        /// The FBS BillToID (customer ID) that scopes this event to a single customer.
+        /// The dispatcher uses this to filter ClientProfiles by CustomerID so only the
+        /// matching customer's vendor profile receives the event — preventing cross-customer
+        /// routing leaks when multiple customers share the same vendor.
+        ///
+        /// Zero means "unscoped" (legacy events); dispatcher will skip customer-scoped
+        /// profiles when BillToID = 0. Callers should always set this from the resolved
+        /// Load / Tracking row's BillToID.
+        /// </summary>
+        public int BillToID { get; set; }
+
+        /// <summary>
         /// UTC timestamp of when the event occurred. Defaults to dispatch time.
         /// Callers may set this explicitly if they're dispatching a historical event.
         /// </summary>

@@ -54,10 +54,13 @@ namespace Vendor.Common.Configuration
         /// Returns all ClientProfile rows matching the given (shipper, eventType) routing,
         /// for use by the dispatcher.
         ///
+        /// LEGACY OVERLOAD — kept for backward compatibility with callers that don't have
+        /// a BillToID in scope. Uses ClientProfiles alone (no customer scoping); should
+        /// only be used by code paths that predate the VVIProfiles routing.
+        ///
         /// Routing semantics:
         /// - Profiles where ShipperCode = shipperCode AND IsActive AND EnabledEvents contains eventType
         /// - PLUS profiles where ShipperCode = "VECTOR_DEFAULT" AND IsActive AND EnabledEvents contains eventType
-        /// - The default is a floor, not a fallback — both match. See Deliverable #10 Section 4.2.
         /// </summary>
         public IReadOnlyList<ClientProfile> FindRouting(string shipperCode, string eventTypeName)
         {
@@ -79,6 +82,201 @@ namespace Vendor.Common.Configuration
             }
 
             return matched;
+        }
+
+        /// <summary>
+        /// Customer-scoped routing driven by VVIProfiles. This is the canonical routing
+        /// method — all new dispatch paths should use this.
+        ///
+        /// Flow:
+        /// 1. Query VVIProfiles for rows matching (CustomerID = evt.BillToID) AND Active = 1
+        ///    AND the flag column corresponding to evt's type = 1.
+        /// 2. For each matched VVIProfile, look up the vendor's ClientProfile row (keyed
+        ///    on VendorName = VVIProfile.AdapterName) to get the ConfigJson the adapter
+        ///    needs. Vector has ONE integration per vendor — the vendor's connection
+        ///    details are shared across customers.
+        /// 3. Return the enriched list.
+        ///
+        /// Events with BillToID = 0 return nothing (prevents unscoped leaks). Events whose
+        /// customer has no matching VVIProfile return nothing (clean SKIP in the audit).
+        ///
+        /// <paramref name="customerHasAnyActiveProfile"/> is set to true when the customer
+        /// has AT LEAST ONE active VVIProfile row (regardless of which event flags are on),
+        /// and false when the customer isn't set up for VVI at all. The dispatcher uses
+        /// this to distinguish "customer isn't a VVI customer" (silent — don't audit) from
+        /// "customer is set up but this event isn't enabled" (audit as SKIPPED).
+        /// </summary>
+        public IReadOnlyList<ClientProfile> FindRoutingByCustomer(
+            Vendor.Common.Events.VendorEvent evt,
+            out bool customerHasAnyActiveProfile)
+        {
+            customerHasAnyActiveProfile = false;
+            if (evt == null) return new List<ClientProfile>();
+            if (evt.BillToID <= 0) return new List<ClientProfile>();
+
+            var flagColumn = MapEventTypeToVVIFlag(evt);
+            if (flagColumn == null) return new List<ClientProfile>();  // event type not routed via VVIProfiles
+
+            var vendorConfigs = GetAllProfiles();  // cached ClientProfiles rows keyed by VendorName
+            var routingLookup = LoadRoutedAdaptersForCustomer(evt.BillToID, flagColumn);
+            customerHasAnyActiveProfile = routingLookup.CustomerHasAnyActiveProfile;
+
+            if (routingLookup.AdapterNames.Count == 0) return new List<ClientProfile>();
+
+            var result = new List<ClientProfile>(routingLookup.AdapterNames.Count);
+            foreach (var adapterName in routingLookup.AdapterNames)
+            {
+                // Vendor config: match ClientProfile.VendorName = VVIProfile.AdapterName.
+                // Prefer the row for VECTOR_DEFAULT (Vector uses one FK account across customers)
+                // over any shipper-specific override, though today we have only VECTOR_DEFAULT.
+                ClientProfile match = null;
+                for (int i = 0; i < vendorConfigs.Count; i++)
+                {
+                    var p = vendorConfigs[i];
+                    if (!p.IsActive) continue;
+                    if (!string.Equals(p.VendorName, adapterName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (match == null || string.Equals(p.ShipperCode, "VECTOR_DEFAULT", StringComparison.OrdinalIgnoreCase))
+                        match = p;
+                }
+
+                if (match != null)
+                    result.Add(match);
+                else
+                    _onError(new InvalidOperationException(
+                        $"VVIProfile for CustomerID={evt.BillToID} routes to adapter '{adapterName}' but no active ClientProfile row exists for that vendor. Adapter config missing."));
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Backward-compat overload that discards the customer-has-any-active-profile flag.
+        /// New callers should prefer the out-parameter overload so they can distinguish
+        /// "no VVI customer" from "VVI customer but this event is off".
+        /// </summary>
+        public IReadOnlyList<ClientProfile> FindRoutingByCustomer(Vendor.Common.Events.VendorEvent evt)
+        {
+            bool _;
+            return FindRoutingByCustomer(evt, out _);
+        }
+
+        /// <summary>
+        /// Maps a VendorEvent to the VVIProfiles column name that gates its dispatch.
+        /// Returns null for event types that don't participate in VVIProfiles routing.
+        ///
+        /// Special case: LoadStatusEvent branches by SourceStatusDescription — an
+        /// "AppointmentChanged" status routes on AppointmentChanged, everything else
+        /// (EDI 214 milestones like X3/AF/D1) routes on CheckCall.
+        /// </summary>
+        private static string MapEventTypeToVVIFlag(Vendor.Common.Events.VendorEvent evt)
+        {
+            var typeName = evt.GetType().Name;
+            switch (typeName)
+            {
+                case "LoadCreatedEvent":
+                case "LoadAssignedEvent":
+                    return "LoadPosted";
+                case "LocationReportedEvent":
+                    // Raw GPS pings / breadcrumb trail — gated by TrackingStatus.
+                    // (Vector-authored check calls and location-inferred milestones travel
+                    // as LoadStatusEvent and are gated by CheckCall.)
+                    return "TrackingStatus";
+                case "LoadStatusEvent":
+                    {
+                        var ls = evt as Vendor.Common.Events.LoadStatusEvent;
+                        if (ls != null && string.Equals(ls.SourceStatusDescription, "AppointmentChanged", StringComparison.OrdinalIgnoreCase))
+                            return "AppointmentChanged";
+                        return "CheckCall";
+                    }
+                case "LoadTrackingStoppedEvent":
+                    return "CancelLoad";
+                case "DocumentAvailableEvent":
+                    return "POD";
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Small tuple-ish struct returned by <see cref="LoadRoutedAdaptersForCustomer"/> so
+        /// the caller can distinguish "customer isn't a VVI customer at all" from "customer
+        /// is a VVI customer but this event's flag is off." Both cases return zero adapter
+        /// names, but only the second one merits an audit row.
+        /// </summary>
+        private struct VVIRoutingLookup
+        {
+            public List<string> AdapterNames;
+            public bool CustomerHasAnyActiveProfile;
+        }
+
+        /// <summary>
+        /// Reads VVIProfiles for a specific customer + event flag. Returns the list of
+        /// AdapterNames that should receive the event AND a flag indicating whether the
+        /// customer has any active VVIProfile at all. Not cached — called on every
+        /// dispatch — because VVIProfiles is small (dozens of rows) and edits should
+        /// take effect immediately.
+        /// </summary>
+        private VVIRoutingLookup LoadRoutedAdaptersForCustomer(int customerId, string flagColumn)
+        {
+            var result = new VVIRoutingLookup
+            {
+                AdapterNames = new List<string>(),
+                CustomerHasAnyActiveProfile = false
+            };
+
+            // Whitelist the flag column against known values — defense against injection
+            // even though only internal code calls this.
+            switch (flagColumn)
+            {
+                case "LoadPosted":
+                case "CheckCall":
+                case "AppointmentChanged":
+                case "POD":
+                case "CancelLoad":
+                case "TrackingStatus":
+                case "Invoice":
+                    break;
+                default:
+                    _onError(new InvalidOperationException($"Unknown VVIProfiles flag column '{flagColumn}'"));
+                    return result;
+            }
+
+            // Single query returns every active profile for the customer plus the flag value.
+            // If any rows come back, CustomerHasAnyActiveProfile = true. Rows with the flag
+            // set to 1 become the adapter list.
+            var sql = $@"
+SELECT AdapterName, [{flagColumn}] AS FlagOn
+FROM dbo.VVIProfiles
+WHERE CustomerID = @CustomerID
+  AND Active = 1;";
+
+            try
+            {
+                using (var cn = new SqlConnection(_connectionString))
+                using (var cmd = new SqlCommand(sql, cn))
+                {
+                    cmd.Parameters.AddWithValue("@CustomerID", customerId);
+                    cn.Open();
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            result.CustomerHasAnyActiveProfile = true;
+                            if (!reader.IsDBNull(1) && reader.GetBoolean(1))
+                            {
+                                result.AdapterNames.Add(reader.GetString(0));
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _onError(ex);
+                // Fail closed on VVIProfiles read errors — better to skip than to leak.
+            }
+
+            return result;
         }
 
         /// <summary>Returns the cached list of profiles, refreshing if the TTL has expired.</summary>

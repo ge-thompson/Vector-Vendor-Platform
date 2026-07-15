@@ -74,7 +74,12 @@ namespace OTR_API.Controllers
         /// <summary>Appointment change for a stop. Times are LOCAL wall-clock at the stop
         /// (freight appointments are local to the stop's location; no timezone conversion).
         /// Carries the full stop snapshot (address + sequence + type) so vendor adapters
-        /// have everything they need — adapters that only consume times can ignore the rest.</summary>
+        /// have everything they need — adapters that only consume times can ignore the rest.
+        ///
+        /// <see cref="AllStops"/> is optional. When populated, the event carries the full
+        /// itinerary in addition to the changed stop — required by vendors like Project 44
+        /// whose appointment API expects every stop on every update. FourKites and other
+        /// single-stop vendors ignore it.</summary>
         public class VVIAppointmentRequest
         {
             public int CustomerID { get; set; }
@@ -93,6 +98,14 @@ namespace OTR_API.Controllers
             public string Latitude { get; set; }
             public string Longitude { get; set; }
             public DateTime? OccurredUtc { get; set; }
+
+            /// <summary>
+            /// Full stop itinerary for the load. Optional. Populate from FBS's load view
+            /// (all pickups, intermediates, and deliveries in sequence). Required for
+            /// vendors like Project 44 whose appointment API expects the whole picture
+            /// on every update. Ignored by single-stop vendors like FourKites.
+            /// </summary>
+            public List<VVIStop> AllStops { get; set; }
         }
 
         /// <summary>A document (POD, BOL, etc.) to deliver to the vendor.</summary>
@@ -236,7 +249,11 @@ namespace OTR_API.Controllers
                     Longitude             = req.Longitude,
                     ScheduledArrivalUtc   = req.ScheduledArrival,
                     ScheduledDepartureUtc = req.ScheduledDeparture
-                }
+                },
+                // Full itinerary when the caller provided it. Single-stop adapters
+                // (FourKites) ignore this and keep using AtStop; full-itinerary adapters
+                // (Project 44) use this and treat AtStop as the pointer to what changed.
+                Stops = MapStops(req.AllStops)
             };
 
             return Dispatch(req.CustomerID, "AppointmentChanged", evt, "Appointment");
