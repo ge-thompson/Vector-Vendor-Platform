@@ -36,11 +36,22 @@ namespace Vendor.Common.Events
         /// <summary>External stop identifier from the originating system. Optional.</summary>
         public string ExternalStopId { get; set; }
 
-        /// <summary>Scheduled arrival in UTC. Null if not yet scheduled.</summary>
-        public DateTime? ScheduledArrivalUtc { get; set; }
+        /// <summary>
+        /// Scheduled arrival at this stop, expressed as LOCAL wall-clock time at the stop
+        /// (freight appointments are anchored to the stop's local time zone — not the
+        /// carrier's, not the customer's, not UTC). Null if not yet scheduled.
+        ///
+        /// Vendors including FourKites and Project 44 expect local wall-clock in their
+        /// appointment payloads (P44's docs technically say UTC, but their platform anchors
+        /// on the stop's own address so passing local-as-if-UTC is what the industry does).
+        /// </summary>
+        public DateTime? ScheduledArrivalLocal { get; set; }
 
-        /// <summary>Scheduled departure in UTC. Null if not yet scheduled.</summary>
-        public DateTime? ScheduledDepartureUtc { get; set; }
+        /// <summary>
+        /// Scheduled departure at this stop, expressed as LOCAL wall-clock time at the stop.
+        /// See <see cref="ScheduledArrivalLocal"/> for time-zone reasoning. Null if not yet scheduled.
+        /// </summary>
+        public DateTime? ScheduledDepartureLocal { get; set; }
 
         /// <summary>Reference numbers specific to this stop (PO, BOL, etc.). Optional.</summary>
         public List<ReferenceNumber> References { get; set; }

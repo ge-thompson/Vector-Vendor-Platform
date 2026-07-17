@@ -85,26 +85,29 @@ namespace Vendor.Common.Configuration
         }
 
         /// <summary>
-        /// Customer-scoped routing driven by VVIProfiles. This is the canonical routing
+        /// Customer-scoped routing driven by VVIProfiles → VendorConfigs. Canonical routing
         /// method — all new dispatch paths should use this.
         ///
-        /// Flow:
-        /// 1. Query VVIProfiles for rows matching (CustomerID = evt.BillToID) AND Active = 1
-        ///    AND the flag column corresponding to evt's type = 1.
-        /// 2. For each matched VVIProfile, look up the vendor's ClientProfile row (keyed
-        ///    on VendorName = VVIProfile.AdapterName) to get the ConfigJson the adapter
-        ///    needs. Vector has ONE integration per vendor — the vendor's connection
-        ///    details are shared across customers.
-        /// 3. Return the enriched list.
+        /// Flow (Phase B onward):
+        /// 1. Query VVIProfiles JOIN VendorConfigs for rows matching (CustomerID = evt.BillToID)
+        ///    AND VVIProfiles.Active = 1 AND VendorConfigs.IsActive = 1 AND the flag column
+        ///    corresponding to evt's type = 1. One row per matched vendor for this customer,
+        ///    each row already carries the AdapterName + ConfigJson the adapter needs.
+        /// 2. Materialize each row into a ClientProfile (in-memory DTO, not a DB row).
+        /// 3. Return the list.
+        ///
+        /// ClientProfiles is no longer consulted for routing. VVIProfiles + VendorConfigs
+        /// is the complete answer to "who receives this event, and how do we reach them?"
         ///
         /// Events with BillToID = 0 return nothing (prevents unscoped leaks). Events whose
         /// customer has no matching VVIProfile return nothing (clean SKIP in the audit).
+        /// If a VVIProfile has NULL VendorConfigID, that adapter is skipped and the
+        /// misconfiguration is surfaced via <see cref="_onError"/>.
         ///
         /// <paramref name="customerHasAnyActiveProfile"/> is set to true when the customer
-        /// has AT LEAST ONE active VVIProfile row (regardless of which event flags are on),
-        /// and false when the customer isn't set up for VVI at all. The dispatcher uses
-        /// this to distinguish "customer isn't a VVI customer" (silent — don't audit) from
-        /// "customer is set up but this event isn't enabled" (audit as SKIPPED).
+        /// has AT LEAST ONE active VVIProfile row (regardless of which event flags are on).
+        /// The dispatcher uses this to distinguish "customer isn't a VVI customer" (silent —
+        /// don't audit) from "customer is set up but this event isn't enabled" (audit SKIPPED).
         /// </summary>
         public IReadOnlyList<ClientProfile> FindRoutingByCustomer(
             Vendor.Common.Events.VendorEvent evt,
@@ -117,33 +120,37 @@ namespace Vendor.Common.Configuration
             var flagColumn = MapEventTypeToVVIFlag(evt);
             if (flagColumn == null) return new List<ClientProfile>();  // event type not routed via VVIProfiles
 
-            var vendorConfigs = GetAllProfiles();  // cached ClientProfiles rows keyed by VendorName
             var routingLookup = LoadRoutedAdaptersForCustomer(evt.BillToID, flagColumn);
             customerHasAnyActiveProfile = routingLookup.CustomerHasAnyActiveProfile;
 
-            if (routingLookup.AdapterNames.Count == 0) return new List<ClientProfile>();
+            if (routingLookup.Matches.Count == 0) return new List<ClientProfile>();
 
-            var result = new List<ClientProfile>(routingLookup.AdapterNames.Count);
-            foreach (var adapterName in routingLookup.AdapterNames)
+            // Materialize each (AdapterName, ConfigJson) pair into a ClientProfile.
+            // ClientProfile is now purely an in-memory shape the adapter consumes; nothing
+            // in this list is loaded from the ClientProfiles table.
+            var result = new List<ClientProfile>(routingLookup.Matches.Count);
+            foreach (var match in routingLookup.Matches)
             {
-                // Vendor config: match ClientProfile.VendorName = VVIProfile.AdapterName.
-                // Prefer the row for VECTOR_DEFAULT (Vector uses one FK account across customers)
-                // over any shipper-specific override, though today we have only VECTOR_DEFAULT.
-                ClientProfile match = null;
-                for (int i = 0; i < vendorConfigs.Count; i++)
+                if (string.IsNullOrEmpty(match.ConfigJson))
                 {
-                    var p = vendorConfigs[i];
-                    if (!p.IsActive) continue;
-                    if (!string.Equals(p.VendorName, adapterName, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (match == null || string.Equals(p.ShipperCode, "VECTOR_DEFAULT", StringComparison.OrdinalIgnoreCase))
-                        match = p;
+                    _onError(new InvalidOperationException(
+                        $"VVIProfile for CustomerID={evt.BillToID}, AdapterName='{match.AdapterName}' " +
+                        "has no VendorConfig attached (VendorConfigID is NULL or the linked config is inactive/missing). Adapter skipped."));
+                    continue;
                 }
 
-                if (match != null)
-                    result.Add(match);
-                else
-                    _onError(new InvalidOperationException(
-                        $"VVIProfile for CustomerID={evt.BillToID} routes to adapter '{adapterName}' but no active ClientProfile row exists for that vendor. Adapter config missing."));
+                result.Add(new ClientProfile
+                {
+                    ProfileId     = 0,                    // synthetic — not from ClientProfiles anymore
+                    ShipperCode   = "VECTOR_SHARED",       // vestigial — keeps IsEventEnabled shape happy
+                    VendorName    = match.AdapterName,    // AdapterName is what the registry keys on
+                    IsActive      = true,                 // already filtered by SQL
+                    EnabledEvents = "*",                  // routing decision is already made — all events accepted
+                    ConfigJson    = match.ConfigJson,
+                    Notes         = null,
+                    CreatedUtc    = DateTime.UtcNow,
+                    UpdatedUtc    = DateTime.UtcNow
+                });
             }
 
             return result;
@@ -200,27 +207,42 @@ namespace Vendor.Common.Configuration
         /// <summary>
         /// Small tuple-ish struct returned by <see cref="LoadRoutedAdaptersForCustomer"/> so
         /// the caller can distinguish "customer isn't a VVI customer at all" from "customer
-        /// is a VVI customer but this event's flag is off." Both cases return zero adapter
-        /// names, but only the second one merits an audit row.
+        /// is a VVI customer but this event's flag is off." Both cases return zero matches,
+        /// but only the second one merits an audit row.
         /// </summary>
         private struct VVIRoutingLookup
         {
-            public List<string> AdapterNames;
+            public List<VVIRoutingMatch> Matches;
             public bool CustomerHasAnyActiveProfile;
         }
 
+        /// <summary>One matched VVIProfile row, already joined to its VendorConfig.</summary>
+        private struct VVIRoutingMatch
+        {
+            public string AdapterName;
+            public string ConfigJson;
+        }
+
         /// <summary>
-        /// Reads VVIProfiles for a specific customer + event flag. Returns the list of
-        /// AdapterNames that should receive the event AND a flag indicating whether the
-        /// customer has any active VVIProfile at all. Not cached — called on every
-        /// dispatch — because VVIProfiles is small (dozens of rows) and edits should
-        /// take effect immediately.
+        /// Reads VVIProfiles for a specific customer + event flag, joining to VendorConfigs
+        /// so the ConfigJson comes back in the same query. Returns the list of matched
+        /// (AdapterName, ConfigJson) pairs AND a flag indicating whether the customer has
+        /// any active VVIProfile at all.
+        ///
+        /// Not cached — called on every dispatch — because VVIProfiles + VendorConfigs are
+        /// small (dozens of rows) and edits should take effect immediately without a cache
+        /// TTL. If DB volume ever justifies caching, add it here.
+        ///
+        /// The JOIN is LEFT so a VVIProfile with no VendorConfig still surfaces the
+        /// customer as "has an active profile" (so we don't drop them to silent-skip land)
+        /// but its ConfigJson will be null and <see cref="FindRoutingByCustomer"/> will
+        /// skip that adapter with an error via <see cref="_onError"/>.
         /// </summary>
         private VVIRoutingLookup LoadRoutedAdaptersForCustomer(int customerId, string flagColumn)
         {
             var result = new VVIRoutingLookup
             {
-                AdapterNames = new List<string>(),
+                Matches = new List<VVIRoutingMatch>(),
                 CustomerHasAnyActiveProfile = false
             };
 
@@ -241,14 +263,19 @@ namespace Vendor.Common.Configuration
                     return result;
             }
 
-            // Single query returns every active profile for the customer plus the flag value.
-            // If any rows come back, CustomerHasAnyActiveProfile = true. Rows with the flag
-            // set to 1 become the adapter list.
+            // Single query returns every active profile for the customer, its flag value,
+            // and the joined VendorConfig's ConfigJson. Rows with the flag set to 1 AND
+            // an active VendorConfig become the match list.
             var sql = $@"
-SELECT AdapterName, [{flagColumn}] AS FlagOn
-FROM dbo.VVIProfiles
-WHERE CustomerID = @CustomerID
-  AND Active = 1;";
+SELECT vp.AdapterName,
+       vp.[{flagColumn}] AS FlagOn,
+       vc.ConfigJson
+FROM dbo.VVIProfiles vp
+LEFT JOIN dbo.VendorConfigs vc
+       ON vc.ConfigID = vp.VendorConfigID
+      AND vc.IsActive = 1
+WHERE vp.CustomerID = @CustomerID
+  AND vp.Active = 1;";
 
             try
             {
@@ -264,7 +291,11 @@ WHERE CustomerID = @CustomerID
                             result.CustomerHasAnyActiveProfile = true;
                             if (!reader.IsDBNull(1) && reader.GetBoolean(1))
                             {
-                                result.AdapterNames.Add(reader.GetString(0));
+                                result.Matches.Add(new VVIRoutingMatch
+                                {
+                                    AdapterName = reader.GetString(0),
+                                    ConfigJson  = reader.IsDBNull(2) ? null : reader.GetString(2)
+                                });
                             }
                         }
                     }

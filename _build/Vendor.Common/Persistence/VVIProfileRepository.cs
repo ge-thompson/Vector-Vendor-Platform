@@ -65,13 +65,16 @@ namespace Vendor.Common.Persistence
             }
 
             // Column name comes from the whitelist above, never from user input — safe to inline.
+            // Phase B: LEFT JOIN VendorConfigs so we get the authoritative ConfigJson in one query.
             var sql =
-                "SELECT ID, CustomerID, Customer, Vendor, AdapterName, Active, " +
-                "LoadPosted, CheckCall, AppointmentChanged, POD, TrackingStatus, CancelLoad, Invoice, " +
-                "EndpointUrl, AuthType, ApiKey, HeaderName, Username, Password, Secret, " +
-                "SignatureHeader, SignatureEncoding, Instructions, Notes, CreatedDate, ModifiedDate " +
-                "FROM dbo.VVIProfiles " +
-                "WHERE CustomerID = @CustomerID AND Active = 1 AND " + column + " = 1;";
+                "SELECT vp.ID, vp.CustomerID, vp.Customer, vp.Vendor, vp.AdapterName, vp.Active, " +
+                "vp.LoadPosted, vp.CheckCall, vp.AppointmentChanged, vp.POD, vp.TrackingStatus, vp.CancelLoad, vp.Invoice, " +
+                "vp.EndpointUrl, vp.AuthType, vp.ApiKey, vp.HeaderName, vp.Username, vp.Password, vp.Secret, " +
+                "vp.SignatureHeader, vp.SignatureEncoding, vp.Instructions, vp.Notes, vp.CreatedDate, vp.ModifiedDate, " +
+                "vp.VendorConfigID, vc.ConfigJson AS VendorConfigJson " +
+                "FROM dbo.VVIProfiles vp " +
+                "LEFT JOIN dbo.VendorConfigs vc ON vc.ConfigID = vp.VendorConfigID AND vc.IsActive = 1 " +
+                "WHERE vp.CustomerID = @CustomerID AND vp.Active = 1 AND vp." + column + " = 1;";
 
             try
             {
@@ -105,12 +108,14 @@ namespace Vendor.Common.Persistence
             var results = new List<VVIProfile>();
 
             const string sql =
-                "SELECT ID, CustomerID, Customer, Vendor, AdapterName, Active, " +
-                "LoadPosted, CheckCall, AppointmentChanged, POD, TrackingStatus, CancelLoad, Invoice, " +
-                "EndpointUrl, AuthType, ApiKey, HeaderName, Username, Password, Secret, " +
-                "SignatureHeader, SignatureEncoding, Instructions, Notes, CreatedDate, ModifiedDate " +
-                "FROM dbo.VVIProfiles " +
-                "WHERE CustomerID = @CustomerID AND Active = 1;";
+                "SELECT vp.ID, vp.CustomerID, vp.Customer, vp.Vendor, vp.AdapterName, vp.Active, " +
+                "vp.LoadPosted, vp.CheckCall, vp.AppointmentChanged, vp.POD, vp.TrackingStatus, vp.CancelLoad, vp.Invoice, " +
+                "vp.EndpointUrl, vp.AuthType, vp.ApiKey, vp.HeaderName, vp.Username, vp.Password, vp.Secret, " +
+                "vp.SignatureHeader, vp.SignatureEncoding, vp.Instructions, vp.Notes, vp.CreatedDate, vp.ModifiedDate, " +
+                "vp.VendorConfigID, vc.ConfigJson AS VendorConfigJson " +
+                "FROM dbo.VVIProfiles vp " +
+                "LEFT JOIN dbo.VendorConfigs vc ON vc.ConfigID = vp.VendorConfigID AND vc.IsActive = 1 " +
+                "WHERE vp.CustomerID = @CustomerID AND vp.Active = 1;";
 
             try
             {
@@ -164,7 +169,9 @@ namespace Vendor.Common.Persistence
                 Instructions       = GetStr(r, 22),
                 Notes              = GetStr(r, 23),
                 CreatedDate        = GetDate(r, 24),
-                ModifiedDate       = GetDate(r, 25)
+                ModifiedDate       = GetDate(r, 25),
+                VendorConfigID     = r.IsDBNull(26) ? (int?)null : Convert.ToInt32(r.GetValue(26)),
+                VendorConfigJson   = r.IsDBNull(27) ? null : r.GetString(27)
             };
         }
 

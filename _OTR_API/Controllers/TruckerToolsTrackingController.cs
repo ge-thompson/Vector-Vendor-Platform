@@ -965,8 +965,8 @@ namespace OTR_API.Controllers
                     Longitude            = s.lon.ToString(),
                     Notes                = s.notes,
                     ExternalStopId       = s.stopExternalId,
-                    ScheduledArrivalUtc  = TryParseStopUtc(s.datetime),
-                    ScheduledDepartureUtc= TryParseStopUtc(s.datetimeExit)
+                    ScheduledArrivalLocal  = TryParseStopUtc(s.datetime),
+                    ScheduledDepartureLocal= TryParseStopUtc(s.datetimeExit)
                 });
             }
 

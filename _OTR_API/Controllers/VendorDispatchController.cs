@@ -133,8 +133,10 @@ namespace OTR_API.Controllers
             public string PostalCode { get; set; }
             public string Latitude { get; set; }
             public string Longitude { get; set; }
-            public DateTime? ScheduledArrivalUtc { get; set; }
-            public DateTime? ScheduledDepartureUtc { get; set; }
+            /// <summary>Scheduled arrival, LOCAL wall-clock at the stop.</summary>
+            public DateTime? ScheduledArrivalLocal { get; set; }
+            /// <summary>Scheduled departure, LOCAL wall-clock at the stop.</summary>
+            public DateTime? ScheduledDepartureLocal { get; set; }
         }
 
         /// <summary>One vendor's dispatch outcome, returned to the caller for visibility.</summary>
@@ -237,18 +239,18 @@ namespace OTR_API.Controllers
                 SourceStatusDescription = "AppointmentChanged",
                 AtStop = new StopInfo
                 {
-                    ExternalStopId        = req.StopExternalId,
-                    SequenceNumber        = req.StopSequence,
-                    Role                  = ParseStopRole(req.StopType),
-                    AddressLine1          = req.AddressLine1,
-                    City                  = req.City,
-                    State                 = req.State,
-                    PostalCode            = req.PostalCode,
-                    Country               = req.Country,
-                    Latitude              = req.Latitude,
-                    Longitude             = req.Longitude,
-                    ScheduledArrivalUtc   = req.ScheduledArrival,
-                    ScheduledDepartureUtc = req.ScheduledDeparture
+                    ExternalStopId          = req.StopExternalId,
+                    SequenceNumber          = req.StopSequence,
+                    Role                    = ParseStopRole(req.StopType),
+                    AddressLine1            = req.AddressLine1,
+                    City                    = req.City,
+                    State                   = req.State,
+                    PostalCode              = req.PostalCode,
+                    Country                 = req.Country,
+                    Latitude                = req.Latitude,
+                    Longitude               = req.Longitude,
+                    ScheduledArrivalLocal   = req.ScheduledArrival,
+                    ScheduledDepartureLocal = req.ScheduledDeparture
                 },
                 // Full itinerary when the caller provided it. Single-stop adapters
                 // (FourKites) ignore this and keep using AtStop; full-itinerary adapters
@@ -537,17 +539,17 @@ namespace OTR_API.Controllers
                 if (!Enum.TryParse(s.Role, true, out role)) role = StopRole.Intermediate;
                 list.Add(new StopInfo
                 {
-                    SequenceNumber        = s.SequenceNumber,
-                    Role                  = role,
-                    Name                  = s.Name,
-                    AddressLine1          = s.AddressLine1,
-                    City                  = s.City,
-                    State                 = s.State,
-                    PostalCode            = s.PostalCode,
-                    Latitude              = s.Latitude,
-                    Longitude             = s.Longitude,
-                    ScheduledArrivalUtc   = s.ScheduledArrivalUtc,
-                    ScheduledDepartureUtc = s.ScheduledDepartureUtc
+                    SequenceNumber          = s.SequenceNumber,
+                    Role                    = role,
+                    Name                    = s.Name,
+                    AddressLine1            = s.AddressLine1,
+                    City                    = s.City,
+                    State                   = s.State,
+                    PostalCode              = s.PostalCode,
+                    Latitude                = s.Latitude,
+                    Longitude               = s.Longitude,
+                    ScheduledArrivalLocal   = s.ScheduledArrivalLocal,
+                    ScheduledDepartureLocal = s.ScheduledDepartureLocal
                 });
             }
             return list;
@@ -555,47 +557,57 @@ namespace OTR_API.Controllers
 
         /// <summary>
         /// Projects a VVIProfile row into a ClientProfile whose ConfigJson carries the
-        /// vendor-specific settings the adapter parses. The VVIProfile stores endpoint and
-        /// credentials in dedicated columns; we assemble them into the JSON shape the
-        /// adapter already knows how to read.
+        /// vendor-specific settings the adapter parses.
+        ///
+        /// Phase B: when the VVIProfile row has a VendorConfigID pointing at an active
+        /// VendorConfigs row, that ConfigJson is used verbatim — authoritative source of
+        /// truth. When VendorConfigID is null (legacy row, or migration not applied),
+        /// fall back to the previous behavior: synthesize ConfigJson from the VVIProfile's
+        /// own inline columns (ApiKey/EndpointUrl/Instructions).
         /// </summary>
         private static ClientProfile BuildClientProfile(VVIProfile p)
         {
-            // Minimal config the FK adapter needs: apiKey + billToCode (+ optional endpoint).
-            // Instructions, if present, may carry extra vendor config (environment, scac, etc.)
-            // as JSON; merge it so operators can extend without code changes.
-            var config = new Dictionary<string, object>
-            {
-                ["apiKey"]     = p.ApiKey ?? "",
-                ["billToCode"] = "",                 // not stored as a column; may live in Instructions
-            };
-
-            if (!string.IsNullOrWhiteSpace(p.EndpointUrl))
-                config["baseUrlOverride"] = p.EndpointUrl;
-
             string configJson;
-            if (!string.IsNullOrWhiteSpace(p.Instructions))
+
+            // Preferred path: VendorConfigs.ConfigJson (Phase B onward).
+            if (!string.IsNullOrWhiteSpace(p.VendorConfigJson))
             {
-                // Instructions is authoritative for any keys it sets; start from it, then
-                // fill apiKey/baseUrl if Instructions didn't provide them.
-                try
-                {
-                    var fromInstructions = JsonConvert.DeserializeObject<Dictionary<string, object>>(p.Instructions)
-                                           ?? new Dictionary<string, object>();
-                    foreach (var kv in config)
-                        if (!fromInstructions.ContainsKey(kv.Key))
-                            fromInstructions[kv.Key] = kv.Value;
-                    configJson = JsonConvert.SerializeObject(fromInstructions);
-                }
-                catch
-                {
-                    // Instructions wasn't valid JSON — fall back to the column-built config.
-                    configJson = JsonConvert.SerializeObject(config);
-                }
+                configJson = p.VendorConfigJson;
             }
             else
             {
-                configJson = JsonConvert.SerializeObject(config);
+                // Legacy fallback: synthesize from inline columns. Kept so pre-Phase-B
+                // rows still work; safe to remove after every VVIProfile has been
+                // migrated to a VendorConfigID.
+                var config = new Dictionary<string, object>
+                {
+                    ["apiKey"]     = p.ApiKey ?? "",
+                    ["billToCode"] = ""
+                };
+
+                if (!string.IsNullOrWhiteSpace(p.EndpointUrl))
+                    config["baseUrlOverride"] = p.EndpointUrl;
+
+                if (!string.IsNullOrWhiteSpace(p.Instructions))
+                {
+                    try
+                    {
+                        var fromInstructions = JsonConvert.DeserializeObject<Dictionary<string, object>>(p.Instructions)
+                                               ?? new Dictionary<string, object>();
+                        foreach (var kv in config)
+                            if (!fromInstructions.ContainsKey(kv.Key))
+                                fromInstructions[kv.Key] = kv.Value;
+                        configJson = JsonConvert.SerializeObject(fromInstructions);
+                    }
+                    catch
+                    {
+                        configJson = JsonConvert.SerializeObject(config);
+                    }
+                }
+                else
+                {
+                    configJson = JsonConvert.SerializeObject(config);
+                }
             }
 
             return new ClientProfile

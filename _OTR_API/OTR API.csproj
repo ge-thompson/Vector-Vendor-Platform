@@ -121,6 +121,10 @@
       <Project>{A1A1A1A1-0001-0001-0001-000000000002}</Project>
       <Name>Vendor.FourKites</Name>
     </ProjectReference>
+    <ProjectReference Include="..\_build\Vendor.Project44\Vendor.Project44.csproj">
+      <Project>{7f823551-4b1c-2162-be58-1d0323119df5}</Project>
+      <Name>Vendor.Project44</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <Content Include="inmotionreset.aspx" />

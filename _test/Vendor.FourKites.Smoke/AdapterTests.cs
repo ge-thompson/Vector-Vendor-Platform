@@ -239,16 +239,16 @@ namespace Vendor.FourKites.Smoke
                             SequenceNumber = 1, Role = StopRole.Pickup,
                             Name = "Memphis Warehouse", AddressLine1 = "123 Main",
                             City = "Memphis", State = "TN",
-                            ScheduledArrivalUtc = new DateTime(2026,6,27,8,0,0,DateTimeKind.Utc),
-                            ScheduledDepartureUtc = new DateTime(2026,6,27,16,0,0,DateTimeKind.Utc)
+                            ScheduledArrivalLocal = new DateTime(2026,6,27,8,0,0,DateTimeKind.Utc),
+                            ScheduledDepartureLocal = new DateTime(2026,6,27,16,0,0,DateTimeKind.Utc)
                         },
                         Destination = new StopInfo
                         {
                             SequenceNumber = 2, Role = StopRole.Delivery,
                             Name = "Nashville DC", AddressLine1 = "456 Broadway",
                             City = "Nashville", State = "TN",
-                            ScheduledArrivalUtc = new DateTime(2026,6,28,8,0,0,DateTimeKind.Utc),
-                            ScheduledDepartureUtc = new DateTime(2026,6,28,16,0,0,DateTimeKind.Utc)
+                            ScheduledArrivalLocal = new DateTime(2026,6,28,8,0,0,DateTimeKind.Utc),
+                            ScheduledDepartureLocal = new DateTime(2026,6,28,16,0,0,DateTimeKind.Utc)
                         }
                     }, NewProfile());
 
@@ -358,16 +358,16 @@ namespace Vendor.FourKites.Smoke
                     SequenceNumber = 1, Role = StopRole.Pickup,
                     Name = "Memphis Warehouse", AddressLine1 = "123 Main",
                     City = "Memphis", State = "TN",
-                    ScheduledArrivalUtc = new DateTime(2026,1,15,8,0,0,DateTimeKind.Utc),
-                    ScheduledDepartureUtc = new DateTime(2026,1,15,16,0,0,DateTimeKind.Utc)
+                    ScheduledArrivalLocal = new DateTime(2026,1,15,8,0,0,DateTimeKind.Utc),
+                    ScheduledDepartureLocal = new DateTime(2026,1,15,16,0,0,DateTimeKind.Utc)
                 },
                 new StopInfo
                 {
                     SequenceNumber = 2, Role = StopRole.Delivery,
                     Name = "Nashville DC", AddressLine1 = "456 Broadway",
                     City = "Nashville", State = "TN",
-                    ScheduledArrivalUtc = new DateTime(2026,1,16,8,0,0,DateTimeKind.Utc),
-                    ScheduledDepartureUtc = new DateTime(2026,1,16,16,0,0,DateTimeKind.Utc)
+                    ScheduledArrivalLocal = new DateTime(2026,1,16,8,0,0,DateTimeKind.Utc),
+                    ScheduledDepartureLocal = new DateTime(2026,1,16,16,0,0,DateTimeKind.Utc)
                 }
             }
         };

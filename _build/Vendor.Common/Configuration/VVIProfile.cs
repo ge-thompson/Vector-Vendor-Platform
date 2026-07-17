@@ -65,6 +65,18 @@ namespace Vendor.Common.Configuration
         public DateTime CreatedDate { get; set; }
         public DateTime ModifiedDate { get; set; }
 
+        // ─── Vendor-config link (Phase B) ──────────────────────
+
+        /// <summary>FK to dbo.VendorConfigs. Null on legacy rows; the dispatcher falls
+        /// back to synthesizing config from the inline columns above when null.</summary>
+        public int? VendorConfigID { get; set; }
+
+        /// <summary>The joined VendorConfigs.ConfigJson, populated when VendorConfigID is
+        /// set and the linked VendorConfig row is active. Null otherwise. This is the
+        /// authoritative source for adapter config once Phase B is deployed — the inline
+        /// EndpointUrl/ApiKey/etc columns are legacy fallback.</summary>
+        public string VendorConfigJson { get; set; }
+
         /// <summary>
         /// True if the named event is enabled on this profile. The dispatcher can use
         /// either this helper or query directly by column. Names match the VVI event types.

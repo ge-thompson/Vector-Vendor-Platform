@@ -313,16 +313,16 @@ namespace Vendor.FourKites.Mapping
                 su["stopType"] = stopTypeStr;
 
             // ─── Appointment window — the actual point of this update ───
-            // ISO 8601 with Z suffix. The envelope sets timeZone="UTC" so FK interprets
-            // these as UTC instants. Future fix: if StopInfo gains a timezone, convert
-            // here to the stop's local wall-clock and drop the envelope timeZone.
-            if (stop.ScheduledArrivalUtc.HasValue)
-                su["earliestAppointmentTime"] = ToFkUtcIso(stop.ScheduledArrivalUtc.Value);
-            if (stop.ScheduledDepartureUtc.HasValue)
-                su["latestAppointmentTime"] = ToFkUtcIso(stop.ScheduledDepartureUtc.Value);
+            // Local wall-clock at the stop, ISO 8601 without Z (per FK's stop appointment
+            // convention). The envelope's timeZone="UTC" is unused for these fields; FK
+            // reads them relative to the stop's own address time zone.
+            if (stop.ScheduledArrivalLocal.HasValue)
+                su["earliestAppointmentTime"] = ToFkLocalIso(stop.ScheduledArrivalLocal.Value);
+            if (stop.ScheduledDepartureLocal.HasValue)
+                su["latestAppointmentTime"] = ToFkLocalIso(stop.ScheduledDepartureLocal.Value);
             // If only arrival is set, mirror it — FK collapses earliest==latest to a single time.
-            if (stop.ScheduledArrivalUtc.HasValue && !stop.ScheduledDepartureUtc.HasValue)
-                su["latestAppointmentTime"] = ToFkUtcIso(stop.ScheduledArrivalUtc.Value);
+            if (stop.ScheduledArrivalLocal.HasValue && !stop.ScheduledDepartureLocal.HasValue)
+                su["latestAppointmentTime"] = ToFkLocalIso(stop.ScheduledArrivalLocal.Value);
 
             return su;
         }
@@ -568,13 +568,13 @@ namespace Vendor.FourKites.Mapping
             // Required: earliest + latest appointment times. ISO 8601 in stop's LOCAL TIMEZONE,
             // NO Z, NO offset. e.g. "2026-01-15T08:00:00". Fall back to occurredUtc if we don't
             // have a stop-specific time (FK will reject, but we audit the bad payload).
-            if (stop.ScheduledArrivalUtc.HasValue)
-                jo["earliestAppointmentTime"] = ToFkLocalIso(stop.ScheduledArrivalUtc.Value);
-            if (stop.ScheduledDepartureUtc.HasValue)
-                jo["latestAppointmentTime"] = ToFkLocalIso(stop.ScheduledDepartureUtc.Value);
+            if (stop.ScheduledArrivalLocal.HasValue)
+                jo["earliestAppointmentTime"] = ToFkLocalIso(stop.ScheduledArrivalLocal.Value);
+            if (stop.ScheduledDepartureLocal.HasValue)
+                jo["latestAppointmentTime"] = ToFkLocalIso(stop.ScheduledDepartureLocal.Value);
             // If only arrival is set, FK still requires latestAppointmentTime — mirror it.
-            if (stop.ScheduledArrivalUtc.HasValue && !stop.ScheduledDepartureUtc.HasValue)
-                jo["latestAppointmentTime"] = ToFkLocalIso(stop.ScheduledArrivalUtc.Value);
+            if (stop.ScheduledArrivalLocal.HasValue && !stop.ScheduledDepartureLocal.HasValue)
+                jo["latestAppointmentTime"] = ToFkLocalIso(stop.ScheduledArrivalLocal.Value);
 
             // stopReferenceId: our external stop id (used by FK to identify "which stop"
             // when posting status callbacks back to us).
@@ -659,15 +659,13 @@ namespace Vendor.FourKites.Mapping
         /// times in the stop's LOCAL TIMEZONE without zone marker.
         /// Example: "2026-01-15T08:00:00".
         ///
-        /// NOTE: our StopInfo currently stores ScheduledArrival/Departure as UTC. Without
-        /// a stop-side timezone we can't truly localize. For now we emit the UTC clock
-        /// reading without the Z, which matches what TT typically sends. Future fix:
-        /// add Timezone to StopInfo and convert here.
+        /// Callers pass StopInfo.ScheduledArrivalLocal / ScheduledDepartureLocal, which
+        /// carry local wall-clock time at the stop (populated by FBS from the stop's own
+        /// address). No conversion needed here — just format.
         /// </summary>
-        private static string ToFkLocalIso(DateTime utc)
+        private static string ToFkLocalIso(DateTime local)
         {
-            // Strip Z / offset by formatting without the K specifier.
-            return utc.ToString("yyyy-MM-ddTHH:mm:ss");
+            return local.ToString("yyyy-MM-ddTHH:mm:ss");
         }
 
         /// <summary>

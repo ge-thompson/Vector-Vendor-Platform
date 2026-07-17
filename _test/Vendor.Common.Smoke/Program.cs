@@ -32,7 +32,7 @@ namespace Vendor.Common.Smoke
                         SequenceNumber = 1,
                         Role = StopRole.Pickup,
                         City = "Memphis", State = "TN", PostalCode = "38103",
-                        ScheduledArrivalUtc = new DateTime(2026, 6, 1, 14, 0, 0, DateTimeKind.Utc)
+                        ScheduledArrivalLocal = new DateTime(2026, 6, 1, 14, 0, 0, DateTimeKind.Utc)
                     },
                     Destination = new StopInfo
                     {

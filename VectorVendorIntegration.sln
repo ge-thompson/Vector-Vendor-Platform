@@ -18,6 +18,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OTR API", "_OTR_API\OTR API
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_deliverables", "_deliverables", "{B2B2B2B2-0002-0002-0002-000000000001}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vendor.Project44", "_build\Vendor.Project44\Vendor.Project44.csproj", "{7F823551-4B1C-2162-BE58-1D0323119DF5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,11 +54,13 @@ Global
 		{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B0995BF5-9E9C-49E4-B3D4-792F89AA910D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7F823551-4B1C-2162-BE58-1D0323119DF5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7F823551-4B1C-2162-BE58-1D0323119DF5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7F823551-4B1C-2162-BE58-1D0323119DF5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7F823551-4B1C-2162-BE58-1D0323119DF5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(NestedProjects) = preSolution
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C3C3C3C3-0003-0003-0003-000000000001}

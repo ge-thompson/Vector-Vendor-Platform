@@ -115,8 +115,8 @@ namespace Vendor.FourKites.Smoke
             {
                 var cfg = NewCfg();
                 var evt = NewLoadAssignedEvent();
-                evt.Stops[0].ScheduledArrivalUtc = new DateTime(2026, 1, 15, 8, 0, 0, DateTimeKind.Utc);
-                evt.Stops[0].ScheduledDepartureUtc = new DateTime(2026, 1, 15, 16, 0, 0, DateTimeKind.Utc);
+                evt.Stops[0].ScheduledArrivalLocal = new DateTime(2026, 1, 15, 8, 0, 0, DateTimeKind.Utc);
+                evt.Stops[0].ScheduledDepartureLocal = new DateTime(2026, 1, 15, 16, 0, 0, DateTimeKind.Utc);
 
                 var result = PayloadBuilder.BuildLoadCreate(evt, cfg);
 
