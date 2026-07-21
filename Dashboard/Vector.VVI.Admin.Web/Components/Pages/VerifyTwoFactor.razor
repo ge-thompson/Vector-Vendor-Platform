@@ -1,0 +1,19 @@
+@page "/verify-2fa"
+
+<PageTitle>VVI Admin — Verify</PageTitle>
+
+<div style="display:flex;justify-content:center;margin-top:8vh">
+    <MudPaper Class="pa-8" Elevation="4" Style="width:380px">
+        <MudText Typo="Typo.h5" GutterBottom="true"><h1 style="all:unset">Enter your code</h1></MudText>
+        <MudText Typo="Typo.body2" Class="mb-4">We emailed a 6-digit verification code.</MudText>
+
+        <MudTextField T="string" Label="6-digit code" Variant="Variant.Outlined" Class="mb-4" MaxLength="6" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Disabled="true">
+            Verify
+        </MudButton>
+
+        <MudAlert Severity="Severity.Info" Class="mt-4" Dense="true">
+            Verification logic is wired in the next batch (TwoFactorService is ready).
+        </MudAlert>
+    </MudPaper>
+</div>

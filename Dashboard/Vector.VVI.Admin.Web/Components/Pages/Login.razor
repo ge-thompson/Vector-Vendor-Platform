@@ -1,0 +1,20 @@
+@page "/login"
+
+<PageTitle>VVI Admin — Sign in</PageTitle>
+
+<div style="display:flex;justify-content:center;margin-top:8vh">
+    <MudPaper Class="pa-8" Elevation="4" Style="width:380px">
+        <MudText Typo="Typo.h5" GutterBottom="true"><h1 style="all:unset">Sign in</h1></MudText>
+        <MudText Typo="Typo.body2" Class="mb-4">VVI Admin Dashboard</MudText>
+
+        <MudTextField T="string" Label="Email" Variant="Variant.Outlined" Class="mb-3" />
+        <MudTextField T="string" Label="Password" InputType="InputType.Password" Variant="Variant.Outlined" Class="mb-4" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Disabled="true">
+            Continue
+        </MudButton>
+
+        <MudAlert Severity="Severity.Info" Class="mt-4" Dense="true">
+            Login + email 2FA flow is wired in the next batch. This is the page shell.
+        </MudAlert>
+    </MudPaper>
+</div>

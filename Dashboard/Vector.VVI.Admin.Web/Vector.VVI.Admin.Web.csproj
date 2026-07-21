@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Vector.VVI.Admin.Web</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MudBlazor" Version="7.15.0" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vector.VVI.Admin.Common\Vector.VVI.Admin.Common.csproj" />
+    <ProjectReference Include="..\Vector.VVI.Admin.Data\Vector.VVI.Admin.Data.csproj" />
+    <ProjectReference Include="..\Vector.VVI.Admin.Auth\Vector.VVI.Admin.Auth.csproj" />
+    <ProjectReference Include="..\Vector.VVI.Admin.LiveOps\Vector.VVI.Admin.LiveOps.csproj" />
+    <ProjectReference Include="..\Vector.VVI.Admin.Transactions\Vector.VVI.Admin.Transactions.csproj" />
+    <ProjectReference Include="..\Vector.VVI.Admin.Customers\Vector.VVI.Admin.Customers.csproj" />
+    <ProjectReference Include="..\Vector.VVI.Admin.Profiles\Vector.VVI.Admin.Profiles.csproj" />
+    <ProjectReference Include="..\Vector.VVI.Admin.Vendors\Vector.VVI.Admin.Vendors.csproj" />
+  </ItemGroup>
+
+</Project>
